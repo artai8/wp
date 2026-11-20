@@ -151,6 +151,56 @@ def mount_extra_routes(
     if hasattr(auth, "db_path"):
         enable_sqlite_wal(Path(auth.db_path))
 
+
+    def _is_admin_user(request: Request) -> bool:
+        uid = caller_id_fn(request) or ""
+        if not uid:
+            return False
+        env_admins = [x.strip().lower() for x in os.environ.get("ADMIN_USERS", "").split(",") if x.strip()]
+        # Resolve username from auth DB
+        username = ""
+        try:
+            u = auth.get_user(uid) if hasattr(auth, "get_user") else None
+            if isinstance(u, dict):
+                username = (u.get("username") or "").lower()
+        except Exception:
+            pass
+        if env_admins:
+            return uid.lower() in env_admins or (username and username in env_admins)
+        # Default policy: 'admin' or the very first registered user is the system administrator
+        if username == "admin":
+            return True
+        try:
+            import sqlite3
+            dbp = getattr(auth, "db_path", None)
+            if dbp:
+                conn = sqlite3.connect(str(dbp))
+                row = conn.execute("SELECT user_id FROM users ORDER BY rowid ASC LIMIT 1").fetchone()
+                conn.close()
+                if row and str(row[0]) == str(uid):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _require_admin(request: Request):
+        if not _is_admin_user(request):
+            raise HTTPException(status_code=403, detail="需要管理员权限（可通过 ADMIN_USERS 环境变量配置）")
+
+    # Background maintenance daemon: auto-purge expired trash + GC orphan chunks
+    def _maintenance_loop():
+        import threading, time as _t
+        interval = max(60, int(os.environ.get("MAINTENANCE_INTERVAL_SEC", "3600")))
+        while True:
+            _t.sleep(interval)
+            try:
+                engine.purge_expired_trash()
+                engine.gc_chunks()
+            except Exception:
+                pass
+    import threading as _th
+    _th.Thread(target=_maintenance_loop, daemon=True, name="mydrive-maintenance").start()
+
     # ==================== TIERED STORAGE & SPACE SAVING ====================
 
     @app.get("/api/storage/tiered/config")
@@ -577,7 +627,7 @@ loadShare();
 
     @app.post("/api/vip/codes/generate")
     async def generate_vip_codes(req: RedeemCodeGenRequest, request: Request):
-        caller_id_fn(request)
+        _require_admin(request)
         try:
             codes = commercial.generate_codes(req.plan, req.duration_days, req.count)
             return {"codes": codes}
@@ -594,17 +644,17 @@ loadShare();
 
     @app.get("/api/admin/moderate")
     async def list_moderated_cids(request: Request):
-        caller_id_fn(request)
+        _require_admin(request)
         return {"blocked": commercial.list_blocked_cids()}
 
     @app.post("/api/admin/moderate/{cid}")
     async def moderate_block_cid(cid: str, req: ModerateRequest, request: Request):
-        caller_id_fn(request)
+        _require_admin(request)
         return commercial.block_cid(cid, reason=req.reason)
 
     @app.delete("/api/admin/moderate/{cid}")
     async def moderate_unblock_cid(cid: str, request: Request):
-        caller_id_fn(request)
+        _require_admin(request)
         return commercial.unblock_cid(cid)
 
     @app.post("/api/storage/presign-upload")

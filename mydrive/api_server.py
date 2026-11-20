@@ -33,7 +33,6 @@ from cid_engine import compute_cid, parse_cid
 from webdav_gateway import WebDAVGateway
 from auth_manager import AuthManager
 from sync_manager import SyncManager
-from offline_downloader import OfflineDownloader
 from offline_engine import Aria2, OfflineEngine
 try:
     from sftp_server import SftpService
@@ -56,7 +55,6 @@ CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", str(4 * 1024 * 1024)))
 engine = StorageEngine(STORAGE_ROOT, chunk_size=CHUNK_SIZE)
 auth = AuthManager(STORAGE_ROOT)
 share = ShareManager(engine)
-offline_dl = OfflineDownloader(engine)
 
 # ---- BT/HTTP 离线下载引擎（aria2 后端） ----
 ARIA2_EXE = os.environ.get("ARIA2_EXE", str(
@@ -273,6 +271,9 @@ def meta_to_info(meta: FileMeta) -> FileInfo:
     )
 
 
+def _commercial():
+    return globals().get("extra_services", {}).get("commercial")
+
 # ==================== ENDPOINTS ====================
 
 @app.get("/api/stats")
@@ -408,6 +409,9 @@ async def get_file(identity: str, request: Request) -> FileInfo:
     meta = engine.get_file_meta(identity, user_id=caller_id(request))
     if not meta:
         raise HTTPException(status_code=404, detail="File not found")
+    cm = _commercial()
+    if cm and cm.is_cid_blocked(meta.content_identity):
+        raise HTTPException(status_code=451, detail="该文件因违规已被限制访问")
     return meta_to_info(meta)
 
 
@@ -805,6 +809,9 @@ async def delete_file(identity: str, request: Request, permanent: bool = Query(F
     meta = engine.get_file_meta(identity, user_id=uid)
     if not meta:
         raise HTTPException(status_code=404, detail="File not found")
+    cm = _commercial()
+    if cm and cm.is_cid_blocked(meta.content_identity):
+        raise HTTPException(status_code=451, detail="该文件因违规已被限制访问")
     engine.set_trashed(identity, trashed=not permanent, permanent=permanent, user_id=uid)
     if uid and permanent:
         auth.update_usage(uid, -meta.size)
@@ -1151,6 +1158,12 @@ async def service_endpoints(request: Request):
 async def add_offline_download(req: OfflineAddRequest, request: Request):
     """添加离线下载：支持 magnet / .torrent / HTTP(S) 直链。"""
     uid = caller_id(request) or "anonymous"
+    cm = _commercial()
+    if cm:
+        mem = cm.get_membership(uid)
+        ost = offline_engine.stats(uid)
+        if ost.get("tasks_commited_today", 0) >= mem["daily_offline_quota"]:
+            raise HTTPException(status_code=429, detail="已达到今日离线下载次数上限，请升级 VIP")
     payload = {
         "url": req.url,
         "name": req.name or "",

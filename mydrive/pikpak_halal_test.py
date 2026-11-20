@@ -256,6 +256,31 @@ def run_all():
     emb_vtt = client.get(emb_url, headers=hdr_a)
     ok("MKV 内封字幕实时提取为 WebVTT", emb_vtt.status_code == 200 and "MKV内封中文字幕测试" in emb_vtt.text, emb_vtt.text)
 
+
+    print("== 8) 商业版安全与 Bug 修复回归：管理员 RBAC、主下载/分享 CID 拦截、回收站 delete_ts ==")
+    # bob is NOT admin -> 403 on code generation and moderation
+    bob_gen = client.post("/api/vip/codes/generate", headers=hdr_b, json={"plan": "svip", "duration_days": 30, "count": 1})
+    ok("普通用户 bob 无权生成兑换码 (HTTP 403)", bob_gen.status_code == 403, str(bob_gen.status_code))
+    bob_mod = client.post(f"/api/admin/moderate/{doc_cid}", headers=hdr_b, json={"reason": "test"})
+    ok("普通用户 bob 无权封禁 CID (HTTP 403)", bob_mod.status_code == 403, str(bob_mod.status_code))
+
+    # admin (alice) blocks CID -> main /api/download and /api/share/.../download both return 451
+    client.post(f"/api/admin/moderate/{doc_cid}", headers=hdr_a, json={"reason": "policy"})
+    dl_blk = client.get(f"/api/download/{doc_id}", headers=hdr_a)
+    ok("主下载路由拦截封禁 CID (HTTP 451)", dl_blk.status_code == 451, str(dl_blk.status_code))
+    sh_blk = client.get(f"/api/share/{sid}/download?password=8888")
+    ok("分享下载路由拦截封禁 CID (HTTP 451)", sh_blk.status_code == 451, str(sh_blk.status_code))
+    client.delete(f"/api/admin/moderate/{doc_cid}", headers=hdr_a)
+
+    # Soft trash writes delete_ts and is NOT prematurely purged by 30-day retention
+    up_t = client.post("/api/upload", headers=hdr_a, files={"file": ("trash_check.txt", b"keep me 30d", "text/plain")})
+    tid = up_t.json()["identity"]
+    client.delete(f"/api/files/{tid}", headers=hdr_a)
+    meta_t = api_server.engine.get_file_meta(tid)
+    ok("移入回收站写入 delete_ts", meta_t is not None and meta_t.delete_ts > 0, str(meta_t))
+    purge_res = client.post("/api/trash/purge-expired?days=30", headers=hdr_a).json()
+    ok("刚移入回收站的文件不会被 30 天策略误删", purge_res["deleted_files"] == 0, str(purge_res))
+
     print(f"\n结果: {passed} passed, 0 failed")
     shutil.rmtree(_TMP, ignore_errors=True)
 

@@ -1287,7 +1287,7 @@ class StorageEngine:
         else:
             conn = sqlite3.connect(str(self.db_path))
             c = conn.cursor()
-            c.execute("UPDATE files SET trashed = 1 WHERE identity = ?", (identity,))
+            c.execute("UPDATE files SET trashed = 1, delete_ts = ? WHERE identity = ?", (now_ms(), identity))
             conn.commit()
             conn.close()
 

@@ -234,42 +234,62 @@ class MediaService:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 prof = QUALITY_PROFILES[quality]
                 seg_pattern = str(out_dir / "seg_%04d.ts")
+                hw = os.environ.get("FFMPEG_HWACCEL", "none").lower()
+                v_encoder = "libx264"
+                if hw == "nvenc":
+                    v_encoder = "h264_nvenc"
+                elif hw == "vaapi":
+                    v_encoder = "h264_vaapi"
+                elif hw == "qsv":
+                    v_encoder = "h264_qsv"
+                elif hw == "videotoolbox":
+                    v_encoder = "h264_videotoolbox"
+
                 if quality == "original":
                     cmd = [
                         self.ffmpeg, "-y", "-i", str(tmp),
                         "-c:v", "copy", "-c:a", "aac", "-b:a", prof["audio_bitrate"],
-                        "-f", "hls", "-hls_time", "6", "-hls_list_size", "0",
+                        "-f", "hls", "-hls_time", "4", "-hls_list_size", "0",
+                        "-hls_flags", "temp_file",
                         "-hls_segment_filename", seg_pattern, str(playlist),
                     ]
-                    rc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
-                    if rc.returncode != 0:
-                        # Fallback to H.264 transcode if stream copy fails (e.g. unsupported codec)
-                        cmd = [
-                            self.ffmpeg, "-y", "-i", str(tmp),
-                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                            "-c:a", "aac", "-b:a", "128k",
-                            "-f", "hls", "-hls_time", "6", "-hls_list_size", "0",
-                            "-hls_segment_filename", seg_pattern, str(playlist),
-                        ]
-                        rc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
-                        if rc.returncode != 0:
-                            return None
                 else:
                     cmd = [
                         self.ffmpeg, "-y", "-i", str(tmp),
                         "-vf", prof["scale"],
-                        "-c:v", "libx264", "-preset", "veryfast", "-crf", prof["crf"],
+                        "-c:v", v_encoder, "-preset", "veryfast", "-crf", prof["crf"],
                         "-c:a", "aac", "-b:a", prof["audio_bitrate"],
-                        "-f", "hls", "-hls_time", "6", "-hls_list_size", "0",
+                        "-f", "hls", "-hls_time", "4", "-hls_list_size", "0",
+                        "-hls_flags", "temp_file",
                         "-hls_segment_filename", seg_pattern, str(playlist),
                     ]
-                    rc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
-                    if rc.returncode != 0:
-                        return None
-                self._trim_cache()
-                return out_dir
-            finally:
+
+                # 流式边转边播：后台启动 ffmpeg，首个 .ts 分片落盘即立刻返回播放列表
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                def _reaper(p, tmp_file):
+                    try:
+                        p.wait(timeout=600)
+                    except Exception:
+                        p.kill()
+                    finally:
+                        tmp_file.unlink(missing_ok=True)
+                        self._trim_cache()
+                threading.Thread(target=_reaper, args=(proc, tmp), daemon=True).start()
+
+                deadline = time.time() + 20.0
+                while time.time() < deadline:
+                    if playlist.exists() and ".ts" in playlist.read_text(encoding="utf-8", errors="ignore"):
+                        return out_dir
+                    if proc.poll() is not None:
+                        break
+                    time.sleep(0.15)
+
+                if playlist.exists() and ".ts" in playlist.read_text(encoding="utf-8", errors="ignore"):
+                    return out_dir
+                return None
+            except Exception:
                 tmp.unlink(missing_ok=True)
+                return None
 
     def get_thumbnail(self, file_identity: str, user_id: Optional[str], timestamp: float = 1.0) -> Optional[Path]:
         """Extract a JPEG cover thumbnail for a video or image file."""

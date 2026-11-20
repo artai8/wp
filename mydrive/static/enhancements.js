@@ -377,11 +377,28 @@
     if (!v) return;
     const pos = v.currentTime || 0;
     const tok = encodeURIComponent(TOKEN);
-    const url = quality === 'direct'
-      ? `${API}/api/download/${identity}?access_token=${tok}`
-      : `${API}/api/media/${identity}/hls/${quality}/index.m3u8?access_token=${tok}`;
-    v.src = url;
-    v.addEventListener('loadedmetadata', () => { v.currentTime = pos; v.play().catch(() => {}); }, {once: true});
+    if (window._activeHls) {
+      window._activeHls.destroy();
+      window._activeHls = null;
+    }
+    if (quality === 'direct') {
+      v.src = `${API}/api/download/${identity}?access_token=${tok}`;
+      v.addEventListener('loadedmetadata', () => { v.currentTime = pos; v.play().catch(() => {}); }, {once: true});
+    } else {
+      const url = `${API}/api/media/${identity}/hls/${quality}/index.m3u8?access_token=${tok}`;
+      if (v.canPlayType('application/vnd.apple.mpegurl')) {
+        v.src = url;
+        v.addEventListener('loadedmetadata', () => { v.currentTime = pos; v.play().catch(() => {}); }, {once: true});
+      } else if (window.Hls && window.Hls.isSupported()) {
+        const hls = new Hls();
+        window._activeHls = hls;
+        hls.loadSource(url);
+        hls.attachMedia(v);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => { v.currentTime = pos; v.play().catch(() => {}); });
+      } else {
+        v.src = url;
+      }
+    }
     showToast(`已切换画质：${quality}`);
   };
 
