@@ -1,0 +1,1653 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyDrive</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f7;color:#1d1d1f;font-size:14px}
+.app{display:flex;min-height:100vh}
+
+/* Sidebar */
+.sidebar{width:220px;background:#fff;border-right:1px solid #e5e5e7;padding:16px 0;flex-shrink:0;position:fixed;height:100vh;overflow-y:auto;z-index:100}
+.sidebar-logo{font-size:18px;font-weight:600;padding:8px 20px 16px;color:#0071e3;display:flex;align-items:center;gap:8px}
+.sidebar-logo svg{width:24px;height:24px}
+.nav-section{padding:8px 0}
+.nav-section-title{font-size:11px;color:#86868b;text-transform:uppercase;padding:4px 20px;font-weight:600}
+.nav-item{padding:8px 20px;display:flex;align-items:center;gap:10px;cursor:pointer;color:#1d1d1f;transition:background .15s}
+.nav-item:hover{background:#f5f5f7}
+.nav-item.active{background:#e8f0fe;color:#0071e3;font-weight:500}
+.nav-item svg{width:18px;height:18px;flex-shrink:0}
+.storage-bar{margin:12px 20px;padding:12px;background:#f5f5f7;border-radius:8px}
+.storage-bar-fill{height:6px;background:#e5e5e7;border-radius:3px;overflow:hidden;margin-top:6px}
+.storage-bar-fill-inner{height:100%;background:#0071e3;transition:width .3s}
+.storage-text{font-size:12px;color:#86868b}
+
+/* Main content */
+.main{margin-left:220px;flex:1;padding:0}
+.topbar{background:#fff;border-bottom:1px solid #e5e5e7;padding:12px 24px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:50}
+.breadcrumb{display:flex;align-items:center;gap:4px;flex:1}
+.breadcrumb-item{cursor:pointer;color:#0071e3;font-size:13px}
+.breadcrumb-item:hover{text-decoration:underline}
+.breadcrumb-sep{color:#86868b;font-size:12px}
+.btn{padding:8px 16px;border:1px solid #d2d2d7;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:6px;transition:all .15s}
+.btn:hover{background:#f5f5f7}
+.btn-primary{background:#0071e3;color:#fff;border-color:#0071e3}
+.btn-primary:hover{background:#0058b9}
+.btn-sm{padding:5px 10px;font-size:12px}
+.btn-icon{padding:6px;border-radius:6px}
+.btn-icon svg{width:18px;height:18px}
+.search-box{flex:1;max-width:300px;padding:7px 12px;border:1px solid #d2d2d7;border-radius:8px;font-size:13px}
+.search-box:focus{outline:none;border-color:#0071e3}
+
+/* Content area */
+.content{padding:24px}
+.file-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.file-card{background:#fff;border:1px solid #e5e5e7;border-radius:10px;padding:16px;cursor:pointer;transition:all .15s;text-align:center}
+.file-card:hover{box-shadow:0 2px 8px rgba(0,0,0,.1);border-color:#d2d2d7}
+.file-card.selected{border-color:#0071e3;background:#f0f7ff}
+.file-icon{width:48px;height:48px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center}
+.file-icon svg{width:40px;height:40px}
+.file-name{font-size:13px;word-break:break-word;line-height:1.3;max-height:34px;overflow:hidden}
+.file-meta{font-size:11px;color:#86868b;margin-top:4px}
+
+/* File list table */
+.file-list{width:100%;border-collapse:collapse}
+.file-list th{text-align:left;padding:8px 12px;font-size:12px;color:#86868b;border-bottom:1px solid #e5e5e7;font-weight:600}
+.file-list td{padding:10px 12px;border-bottom:1px solid #f5f5f7;font-size:13px}
+.file-list tr{cursor:pointer;transition:background .1s}
+.file-list tr:hover{background:#f5f5f7}
+.file-list tr.selected{background:#e8f0fe}
+.file-list .file-name-cell{display:flex;align-items:center;gap:8px}
+.file-list .file-name-cell svg{width:24px;height:24px;flex-shrink:0}
+
+/* Upload area */
+.upload-zone{border:2px dashed #d2d2d7;border-radius:12px;padding:48px;text-align:center;transition:all .15s;margin-bottom:16px}
+.upload-zone.dragover{border-color:#0071e3;background:#f0f7ff}
+.upload-zone svg{width:48px;height:48px;color:#86868b;margin-bottom:12px}
+.upload-zone-text{font-size:15px;color:#1d1d1f;margin-bottom:4px}
+.upload-zone-hint{font-size:12px;color:#86868b}
+
+/* Progress bar */
+.progress-overlay{position:fixed;bottom:24px;right:24px;width:360px;background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.15);z-index:200;overflow:hidden}
+.progress-header{padding:12px 16px;border-bottom:1px solid #f5f5f7;display:flex;align-items:center;justify-content:space-between}
+.progress-title{font-weight:600;font-size:13px}
+.progress-list{max-height:300px;overflow-y:auto}
+.progress-item{padding:8px 16px;border-bottom:1px solid #f5f5f7}
+.progress-item-name{font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between}
+.progress-item-bar{height:4px;background:#e5e5e7;border-radius:2px;overflow:hidden}
+.progress-item-bar-inner{height:100%;background:#34c759;transition:width .3s}
+.progress-item-bar-inner.uploading{background:#0071e3}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:300}
+.modal{background:#fff;border-radius:12px;width:90%;max-width:480px;overflow:hidden}
+.modal-header{padding:16px 20px;border-bottom:1px solid #e5e5e7;font-weight:600;font-size:15px}
+.modal-body{padding:20px}
+.modal-footer{padding:12px 20px;border-top:1px solid #e5e5e7;display:flex;justify-content:flex-end;gap:8px}
+.modal-input{width:100%;padding:8px 12px;border:1px solid #d2d2d7;border-radius:8px;font-size:14px;margin-bottom:12px}
+.modal-input:focus{outline:none;border-color:#0071e3}
+
+/* Stats cards */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:#fff;border-radius:12px;padding:20px;border:1px solid #e5e5e7}
+.stat-card-label{font-size:12px;color:#86868b;margin-bottom:4px}
+.stat-card-value{font-size:24px;font-weight:600}
+.stat-card-sub{font-size:11px;color:#86868b;margin-top:4px}
+
+/* Context menu */
+.ctx-menu{position:fixed;background:#fff;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);z-index:400;min-width:160px;overflow:hidden}
+.ctx-item{padding:8px 16px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px}
+.ctx-item:hover{background:#f5f5f7}
+.ctx-item svg{width:16px;height:16px}
+.ctx-sep{height:1px;background:#e5e5e7}
+
+/* Toast */
+.toast{position:fixed;top:20px;right:20px;padding:12px 20px;background:#1d1d1f;color:#fff;border-radius:8px;font-size:13px;z-index:500;animation:slideIn .3s}
+@keyframes slideIn{from{transform:translateX(400px)}to{transform:translateX(0)}}
+
+/* File preview */
+.preview-overlay{position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:400}
+.preview-close{position:absolute;top:16px;right:16px;color:#fff;cursor:pointer;font-size:24px;background:rgba(255,255,255,.2);border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center}
+.preview-content{max-width:90%;max-height:90%}
+.preview-content img{max-width:90vw;max-height:90vh;object-fit:contain;border-radius:8px}
+.preview-content video{max-width:90vw;max-height:90vh;border-radius:8px}
+.preview-nav{position:absolute;top:50%;transform:translateY(-50%);color:#fff;font-size:32px;cursor:pointer;background:rgba(255,255,255,.15);border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;user-select:none}
+.preview-nav.prev{left:16px}
+.preview-nav.next{right:16px}
+
+.empty{text-align:center;padding:60px 20px;color:#86868b}
+.empty svg{width:64px;height:64px;margin-bottom:12px;opacity:.3}
+.empty-text{font-size:14px}
+</style>
+</head>
+<body>
+<!-- Auth gate: every API call is token-scoped, so the app starts here -->
+<div id="authOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);backdrop-filter:blur(6px);align-items:center;justify-content:center">
+  <div style="width:340px;background:#fff;border-radius:16px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <div style="font-size:20px;font-weight:600;margin-bottom:6px">MyDrive</div>
+    <div id="authSub" style="font-size:13px;color:#86868b;margin-bottom:18px">登录以访问你的文件</div>
+    <input id="authUser" placeholder="用户名（至少 3 位）" autocomplete="username"
+           style="width:100%;box-sizing:border-box;margin-bottom:10px;padding:10px 12px;border:1px solid #d2d2d7;border-radius:8px;font-size:14px">
+    <input id="authPass" type="password" placeholder="密码（至少 6 位）" autocomplete="current-password"
+           style="width:100%;box-sizing:border-box;margin-bottom:10px;padding:10px 12px;border:1px solid #d2d2d7;border-radius:8px;font-size:14px">
+    <div id="authErr" style="color:#ff3b30;font-size:12px;min-height:16px;margin-bottom:8px"></div>
+    <button id="authSubmit" onclick="submitAuth()"
+            style="width:100%;padding:10px;border:0;border-radius:8px;background:#0071e3;color:#fff;font-size:14px;cursor:pointer">登录</button>
+    <div style="text-align:center;margin-top:12px;font-size:13px;color:#0071e3;cursor:pointer" onclick="toggleAuthMode()">
+      <span id="authToggle">没有账号？注册</span>
+    </div>
+  </div>
+</div>
+<div class="app">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      MyDrive
+    </div>
+    <div class="nav-section">
+      <div class="nav-item active" data-page="files" onclick="navigate('files')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        全部文件
+      </div>
+      <div class="nav-item" data-page="shares" onclick="navigate('shares')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        分享管理
+      </div>
+      <div class="nav-item" data-page="offline" onclick="navigate('offline')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        离线下载
+      </div>
+      <div class="nav-item" data-page="trash" onclick="navigate('trash')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        回收站
+      </div>
+      <div class="nav-item" data-page="sync" onclick="navigate('sync')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        同步任务
+      </div>
+      <div class="nav-item" data-page="tickets" onclick="navigate('tickets')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        工单支持
+      </div>
+      <div class="nav-item" data-page="stats" onclick="navigate('stats')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        存储统计
+      </div>
+      <div class="nav-item" data-page="settings" onclick="navigate('settings')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        设置
+      </div>
+    </div>
+    <div id="storageBar" class="storage-bar" style="display:none">
+      <div class="storage-text" id="storageText">0 / 10 GB</div>
+      <div class="storage-bar-fill"><div class="storage-bar-fill-inner" id="storageFill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <div class="breadcrumb" id="breadcrumb"></div>
+      <input type="text" class="search-box" placeholder="搜索文件..." id="searchBox" oninput="onSearch(this.value)">
+      <button class="btn btn-icon" onclick="refreshFiles()" title="刷新">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+      <button class="btn" onclick="newFolder()" title="新建文件夹">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+        新建文件夹
+      </button>
+      <button class="btn btn-primary" onclick="document.getElementById('uploadInput').click()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        上传
+      </button>
+      <input type="file" id="uploadInput" multiple style="display:none" onchange="handleUpload(event)">
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+
+<!-- Progress overlay -->
+<div id="progressOverlay" class="progress-overlay" style="display:none">
+  <div class="progress-header">
+    <div class="progress-title">传输任务</div>
+    <button class="btn btn-icon btn-sm" onclick="document.getElementById('progressOverlay').style.display='none'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="progress-list" id="progressList"></div>
+</div>
+
+<script>
+const API = '';
+let currentPage = 'files';
+let currentParent = 'root';
+let breadcrumbPath = [{name: '全部文件', parent: 'root'}];
+let files = [];
+let selectedFiles = [];
+let viewMode = 'list';
+let searchQuery = '';
+let uploadTasks = [];
+
+// Icons
+const ICONS = {
+  folder: '<svg viewBox="0 0 24 24" fill="#5ac8fa" stroke="#3a9bd5" stroke-width="1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="#e8e8ed" stroke="#aeaeb2" stroke-width="1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  image: '<svg viewBox="0 0 24 24" fill="#ffcc00" stroke="#e6b800" stroke-width="1"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+  video: '<svg viewBox="0 0 24 24" fill="#ff3b30" stroke="#cc2e26" stroke-width="1"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
+  audio: '<svg viewBox="0 0 24 24" fill="#af52de" stroke="#8e3dc0" stroke-width="1"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
+  doc: '<svg viewBox="0 0 24 24" fill="#007aff" stroke="#0058b9" stroke-width="1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>',
+};
+
+function getFileIcon(file) {
+  if (file.is_dir) return ICONS.folder;
+  const m = file.mime_type || '';
+  if (m.startsWith('image/')) return ICONS.image;
+  if (m.startsWith('video/')) return ICONS.video;
+  if (m.startsWith('audio/')) return ICONS.audio;
+  if (m.includes('pdf') || m.includes('document') || m.includes('text')) return ICONS.doc;
+  return ICONS.file;
+}
+
+function formatSize(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function formatDate(ts) {
+  if (!ts) return '';
+  return new Date(ts * 1000).toLocaleDateString('zh-CN', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+let TOKEN = localStorage.getItem('mydrive_token') || '';
+let authMode = 'login';
+
+function authHeaders(extra = {}) {
+  const headers = Object.assign({}, extra);
+  if (TOKEN) headers['Authorization'] = `Bearer ${TOKEN}`;
+  return headers;
+}
+
+function showAuth(show) {
+  const el = document.getElementById('authOverlay');
+  el.style.display = show ? 'flex' : 'none';
+  if (show) setTimeout(() => document.getElementById('authUser').focus(), 50);
+}
+
+function toggleAuthMode() {
+  authMode = authMode === 'login' ? 'register' : 'login';
+  document.getElementById('authSub').textContent =
+    authMode === 'login' ? '登录以访问你的文件' : '创建一个新账号（独立存储空间）';
+  document.getElementById('authSubmit').textContent = authMode === 'login' ? '登录' : '注册';
+  document.getElementById('authToggle').textContent =
+    authMode === 'login' ? '没有账号？注册' : '已有账号？登录';
+  document.getElementById('authErr').textContent = '';
+}
+
+async function submitAuth() {
+  const username = document.getElementById('authUser').value.trim();
+  const password = document.getElementById('authPass').value;
+  const errEl = document.getElementById('authErr');
+  errEl.textContent = '';
+  if (!username || !password) { errEl.textContent = '请输入用户名和密码'; return; }
+
+  try {
+    const resp = await fetch(`${API}/api/auth/${authMode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || '认证失败');
+    TOKEN = data.access_token;
+    localStorage.setItem('mydrive_token', TOKEN);
+    localStorage.setItem('mydrive_user', data.username || username);
+    showAuth(false);
+    showToast(`欢迎，${data.username || username}`);
+    navigate('files');
+  } catch (e) {
+    errEl.textContent = e.message;
+  }
+}
+
+function logout() {
+  TOKEN = '';
+  localStorage.removeItem('mydrive_token');
+  localStorage.removeItem('mydrive_user');
+  showAuth(true);
+}
+
+async function api(path, options = {}) {
+  options.headers = authHeaders(options.headers || {});
+  const resp = await fetch(API + path, options);
+  if (resp.status === 401) { logout(); throw new Error('请先登录'); }
+  if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+  return resp;
+}
+
+async function apiJSON(path, options = {}) {
+  const resp = await api(path, options);
+  return resp.json();
+}
+
+// Navigation
+function navigate(page) {
+  currentPage = page;
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+  // Hide topbar buttons for non-file pages
+  const topbarBtns = document.querySelectorAll('.topbar .btn');
+  if (page === 'files') {
+    currentParent = 'root';
+    breadcrumbPath = [{name: '全部文件', parent: 'root'}];
+    renderFiles();
+  } else if (page === 'trash') {
+    renderTrash();
+  } else if (page === 'stats') {
+    renderStats();
+  } else if (page === 'sync') {
+    renderSync();
+  } else if (page === 'shares') {
+    renderShares();
+  } else if (page === 'offline') {
+    renderOffline();
+  } else if (page === 'tickets') {
+    renderTickets();
+  } else if (page === 'settings') {
+    renderSettings();
+  }
+}
+
+function renderBreadcrumb() {
+  const el = document.getElementById('breadcrumb');
+  el.innerHTML = breadcrumbPath.map((item, i) => {
+    const sep = i > 0 ? '<span class="breadcrumb-sep">/</span>' : '';
+    return `${sep}<span class="breadcrumb-item" onclick="goToBreadcrumb(${i})">${item.name}</span>`;
+  }).join('');
+}
+
+function goToBreadcrumb(i) {
+  breadcrumbPath = breadcrumbPath.slice(0, i + 1);
+  currentParent = breadcrumbPath[i].parent;
+  renderFiles();
+}
+
+// Files page
+async function renderFiles() {
+  renderBreadcrumb();
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="empty"><div class="empty-text">加载中...</div></div>';
+  try {
+    files = await apiJSON(`/api/files?parent=${encodeURIComponent(currentParent)}`);
+    if (searchQuery) {
+      files = files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    }
+    renderFileList();
+  } catch (e) {
+    content.innerHTML = `<div class="empty"><div class="empty-text">加载失败: ${e.message}</div></div>`;
+  }
+}
+
+function renderFileList() {
+  const content = document.getElementById('content');
+  if (files.length === 0) {
+    content.innerHTML = `
+      <div class="upload-zone" id="uploadZone" ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <div class="upload-zone-text">拖拽文件到这里上传</div>
+        <div class="upload-zone-hint">或点击右上角"上传"按钮</div>
+      </div>`;
+    return;
+  }
+
+  // Sort: dirs first, then by name
+  files.sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  let html = `
+    <table class="file-list">
+      <thead><tr>
+        <th style="width:40px"><input type="checkbox" onchange="selectAll(this.checked)" style="cursor:pointer"></th>
+        <th>名称</th>
+        <th style="width:100px">大小</th>
+        <th style="width:160px">修改时间</th>
+        <th style="width:40px"></th>
+      </tr></thead>
+      <tbody>`;
+  for (const f of files) {
+    html += `
+      <tr class="${selectedFiles.includes(f.identity) ? 'selected' : ''}" 
+          onclick="onFileClick(event, '${f.identity}')"
+          oncontextmenu="onFileContextMenu(event, '${f.identity}'); return false">
+        <td onclick="event.stopPropagation()"><input type="checkbox" ${selectedFiles.includes(f.identity)?'checked':''} onchange="toggleSelect('${f.identity}', this.checked)" style="cursor:pointer"></td>
+        <td><div class="file-name-cell">${getFileIcon(f)}<span>${f.name}</span></div></td>
+        <td>${f.is_dir ? '-' : formatSize(f.size)}</td>
+        <td>${formatDate(f.update_ts)}</td>
+        <td onclick="event.stopPropagation()">
+          <button class="btn btn-icon btn-sm" onclick="onFileContextMenu(event, '${f.identity}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+          </button>
+        </td>
+      </tr>`;
+  }
+  html += '</tbody></table>';
+  content.innerHTML = html;
+}
+
+function onFileClick(event, identity) {
+  const file = files.find(f => f.identity === identity);
+  if (!file) return;
+  if (file.is_dir) {
+    currentParent = identity;
+    breadcrumbPath.push({name: file.name, parent: identity});
+    renderFiles();
+  } else {
+    // Preview
+    previewFile(file);
+  }
+}
+
+function toggleSelect(identity, checked) {
+  if (checked) {
+    if (!selectedFiles.includes(identity)) selectedFiles.push(identity);
+  } else {
+    selectedFiles = selectedFiles.filter(id => id !== identity);
+  }
+  renderFileList();
+}
+
+function selectAll(checked) {
+  selectedFiles = checked ? files.map(f => f.identity) : [];
+  renderFileList();
+}
+
+// Context menu
+function onFileContextMenu(event, identity) {
+  event.preventDefault();
+  event.stopPropagation();
+  const file = files.find(f => f.identity === identity);
+  if (!file) return;
+  selectedFiles = [identity];
+
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.left = event.clientX + 'px';
+  menu.style.top = event.clientY + 'px';
+
+  let items = '';
+  if (file.is_dir) {
+    items += `<div class="ctx-item" onclick="openFolder('${identity}')">打开</div>`;
+  } else {
+    items += `<div class="ctx-item" onclick="downloadFile('${identity}')">下载</div>`;
+    items += `<div class="ctx-item" onclick="previewFile(files.find(f=>f.identity==='${identity}'))">预览</div>`;
+    items += `<div class="ctx-item" onclick="copyLink('${identity}')">复制链接</div>`;
+    items += `<div class="ctx-item" onclick="showShareDialog('${identity}')">创建分享</div>`;
+  }
+  items += `<div class="ctx-sep"></div>`;
+  items += `<div class="ctx-item" onclick="showRename('${identity}')">重命名</div>`;
+  items += `<div class="ctx-item" onclick="moveFile('${identity}')">移动到...</div>`;
+  if (!file.is_dir) {
+    items += `<div class="ctx-item" onclick="copyFile('${identity}')">复制到...</div>`;
+  }
+  items += `<div class="ctx-sep"></div>`;
+  items += `<div class="ctx-item" onclick="showFileInfo('${identity}')">详情</div>`;
+  items += `<div class="ctx-item" onclick="trashFile('${identity}')" style="color:#ff3b30">删除</div>`;
+
+  menu.innerHTML = items;
+  document.body.appendChild(menu);
+  setTimeout(() => {
+    document.addEventListener('click', function close() {
+      menu.remove();
+      document.removeEventListener('click', close);
+    });
+  }, 0);
+}
+
+function openFolder(identity) {
+  const file = files.find(f => f.identity === identity);
+  if (file) {
+    currentParent = identity;
+    breadcrumbPath.push({name: file.name, parent: identity});
+    renderFiles();
+  }
+}
+
+// Download
+async function downloadFile(identity) {
+  if (P2P.enabled) {
+    try {
+      if (await p2pDownload(identity)) return;
+    } catch (e) {
+      console.warn('P2P 下载失败，回退 HTTP:', e);
+    }
+  }
+  showToast('开始下载...');
+  const a = document.createElement('a');
+  a.href = `${API}/api/download/${identity}?access_token=${encodeURIComponent(TOKEN)}`;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// Copy link
+function copyLink(identity) {
+  const url = `${location.origin}${API}/api/download/${identity}?access_token=${encodeURIComponent(TOKEN)}`;
+  navigator.clipboard.writeText(url).then(() => showToast('链接已复制'));
+}
+
+// Preview
+let previewIndex = 0;
+let previewFiles = [];
+
+async function previewFile(file) {
+  const m = file.mime_type || '';
+  if (m.startsWith('image/')) {
+    showImagePreview(file);
+  } else if (m.startsWith('video/')) {
+    showVideoPreview(file);
+  } else if (m.startsWith('audio/')) {
+    showAudioPreview(file);
+  } else {
+    // For other files, try to download
+    downloadFile(file.identity);
+  }
+}
+
+function showImagePreview(file) {
+  previewFiles = files.filter(f => !f.is_dir && (f.mime_type||'').startsWith('image/'));
+  previewIndex = previewFiles.findIndex(f => f.identity === file.identity);
+  renderImagePreview();
+}
+
+function renderImagePreview() {
+  const file = previewFiles[previewIndex];
+  if (!file) return;
+  let overlay = document.getElementById('previewOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'previewOverlay';
+    overlay.className = 'preview-overlay';
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = `
+    <div class="preview-close" onclick="document.getElementById('previewOverlay').remove()">✕</div>
+    ${previewIndex > 0 ? '<div class="preview-nav prev" onclick="prevPreview()">‹</div>' : ''}
+    ${previewIndex < previewFiles.length-1 ? '<div class="preview-nav next" onclick="nextPreview()">›</div>' : ''}
+    <div class="preview-content"><img src="${API}/api/download/${file.identity}?access_token=${encodeURIComponent(TOKEN)}" alt="${file.name}"></div>
+  `;
+}
+
+function prevPreview() {
+  if (previewIndex > 0) { previewIndex--; renderImagePreview(); }
+}
+function nextPreview() {
+  if (previewIndex < previewFiles.length-1) { previewIndex++; renderImagePreview(); }
+}
+
+function showVideoPreview(file) {
+  let overlay = document.getElementById('previewOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'previewOverlay';
+    overlay.className = 'preview-overlay';
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = `
+    <div class="preview-close" onclick="document.getElementById('previewOverlay').remove()">✕</div>
+    <div class="preview-content"><video src="${API}/api/download/${file.identity}?access_token=${encodeURIComponent(TOKEN)}" controls autoplay></video></div>
+  `;
+}
+
+function showAudioPreview(file) {
+  let overlay = document.getElementById('previewOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'previewOverlay';
+    overlay.className = 'preview-overlay';
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = `
+    <div class="preview-close" onclick="document.getElementById('previewOverlay').remove()">✕</div>
+    <div class="preview-content"><audio src="${API}/api/download/${file.identity}?access_token=${encodeURIComponent(TOKEN)}" controls autoplay></audio></div>
+  `;
+}
+
+// Rename
+function showRename(identity) {
+  const file = files.find(f => f.identity === identity);
+  if (!file) return;
+  showModal('重命名', `
+    <input type="text" class="modal-input" id="renameInput" value="${file.name}" autofocus>
+  `, async () => {
+    const newName = document.getElementById('renameInput').value.trim();
+    if (!newName || newName === file.name) { closeModal(); return; }
+    try {
+      await apiJSON('/api/rename', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ identity, new_name: newName })
+      });
+      showToast('已重命名');
+      renderFiles();
+    } catch(e) { showToast('重命名失败'); }
+    closeModal();
+  });
+}
+
+// Move
+function moveFile(identity) {
+  showToast('选择目标文件夹...');
+  // Simplified: move to root
+  if (!confirm('移动到根目录？')) return;
+  apiJSON('/api/move', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({identity, new_parent:'root'})
+  }).then(() => { showToast('已移动'); renderFiles(); })
+    .catch(() => showToast('移动失败'));
+}
+function copyFile(identity) { showToast('复制功能开发中...'); }
+
+// Trash
+async function trashFile(identity) {
+  if (!confirm('确定要删除这个文件吗？')) return;
+  try {
+    await api(`/api/files/${identity}`, { method: 'DELETE' });
+    showToast('已移入回收站');
+    renderFiles();
+  } catch (e) {
+    showToast('删除失败: ' + e.message);
+  }
+}
+
+// File info
+async function showFileInfo(identity) {
+  const file = files.find(f => f.identity === identity);
+  if (!file) return;
+  let chunksHtml = '';
+  try {
+    const resp = await api(`/api/files/${identity}/chunks`);
+    const chunkData = await resp.json();
+    chunksHtml = `
+      <div style="font-size:12px;color:#86868b;margin-top:8px">
+        分块数: ${chunkData.chunks.length}<br>
+        内容标识: <code style="font-size:10px;word-break:break-all">${chunkData.content_identity}</code>
+      </div>`;
+  } catch {}
+  showModal('文件详情', `
+    <div style="font-size:14px;line-height:2">
+      名称: ${file.name}<br>
+      大小: ${formatSize(file.size)}<br>
+      类型: ${file.mime_type}<br>
+      创建: ${formatDate(file.create_ts)}<br>
+      修改: ${formatDate(file.update_ts)}
+    </div>
+    ${chunksHtml}
+  `, null);
+}
+
+// Upload
+async function handleUpload(event) {
+  const fileList = event.target.files;
+  if (!fileList || fileList.length === 0) return;
+  for (const file of fileList) {
+    await uploadOneFile(file);
+  }
+  event.target.value = '';
+  renderFiles();
+}
+
+async function uploadOneFile(file) {
+  const taskId = 'upload_' + Date.now() + '_' + Math.random().toString(36).substr(2);
+  uploadTasks.push({ id: taskId, name: file.name, size: file.size, progress: 0, status: 'uploading' });
+  updateProgressUI();
+
+  // Compute hashes for instant transfer check
+  const reader = new FileReader();
+  return new Promise((resolve) => {
+    reader.onload = async (e) => {
+      const data = new Uint8Array(e.target.result);
+      // SHA1 + head SHA1
+      const buf = await crypto.subtle.digest('SHA-1', data);
+      const sha1 = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+      const headBuf = await crypto.subtle.digest('SHA-1', data.slice(0, 262144));
+      const headSha1 = Array.from(new Uint8Array(headBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+      // Check instant transfer
+      try {
+        const checkResp = await fetch(`${API}/api/instant-check`, {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ sha1, head_sha1: headSha1, file_size: file.size, name: file.name })
+        });
+        const checkResult = await checkResp.json();
+        if (checkResult.instant_transfer) {
+          // Instant transfer! Still need to upload (server stores dedup chunks)
+          // But the data is already there, so it's fast
+        }
+      } catch {}
+
+      // Upload
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('parent', currentParent);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API}/api/upload?parent=${encodeURIComponent(currentParent)}&sha1=${sha1}&head_sha1=${headSha1}`);
+      if (TOKEN) xhr.setRequestHeader('Authorization', `Bearer ${TOKEN}`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const task = uploadTasks.find(t => t.id === taskId);
+          if (task) {
+            task.progress = Math.round(e.loaded / e.total * 100);
+            updateProgressUI();
+          }
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 401) {
+          logout();
+          resolve();
+          return;
+        }
+        const task = uploadTasks.find(t => t.id === taskId);
+        if (task) {
+          task.progress = 100;
+          task.status = xhr.status < 400 ? 'done' : 'error';
+          updateProgressUI();
+        }
+        // Become a P2P source for the chunks we just uploaded
+        try {
+          const meta = JSON.parse(xhr.responseText);
+          if (meta && meta.identity) {
+            apiJSON(`/api/files/${meta.identity}/chunks`)
+              .then(d => p2pAnnounce((d.chunks || []).map(c => c.cid)))
+              .catch(() => {});
+          }
+        } catch {}
+        resolve();
+      };
+      xhr.onerror = () => {
+        const task = uploadTasks.find(t => t.id === taskId);
+        if (task) { task.status = 'error'; updateProgressUI(); }
+        showToast('上传失败: ' + file.name);
+        resolve();
+      };
+      xhr.send(formData);
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function updateProgressUI() {
+  const overlay = document.getElementById('progressOverlay');
+  const active = uploadTasks.filter(t => t.status === 'uploading');
+  if (active.length > 0 || uploadTasks.length > 0) {
+    overlay.style.display = 'block';
+  }
+  const list = document.getElementById('progressList');
+  list.innerHTML = uploadTasks.slice(-10).map(t => `
+    <div class="progress-item">
+      <div class="progress-item-name">
+        <span>${t.name}</span>
+        <span>${t.progress}%</span>
+      </div>
+      <div class="progress-item-bar">
+        <div class="progress-item-bar-inner uploading" style="width:${t.progress}%"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Drag and drop
+function handleDragOver(event) {
+  event.preventDefault();
+  event.currentTarget.classList.add('dragover');
+}
+function handleDragLeave(event) {
+  event.currentTarget.classList.remove('dragover');
+}
+function handleDrop(event) {
+  event.preventDefault();
+  event.currentTarget.classList.remove('dragover');
+  const fileList = event.dataTransfer.files;
+  handleUpload({ target: { files: fileList, value: '' } });
+}
+
+// Search
+function onSearch(query) {
+  searchQuery = query;
+  if (currentPage === 'files') renderFileList();
+}
+
+// Refresh
+function refreshFiles() {
+  if (currentPage === 'files') renderFiles();
+  else if (currentPage === 'stats') renderStats();
+}
+
+// New folder
+function newFolder() {
+  showModal('新建文件夹', `
+    <input type="text" class="modal-input" id="folderNameInput" placeholder="文件夹名称" autofocus>
+  `, async () => {
+    const name = document.getElementById('folderNameInput').value.trim();
+    if (!name) return;
+    try {
+      await api(`/api/mkdir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, parent: currentParent })
+      });
+      showToast('文件夹已创建');
+      renderFiles();
+    } catch (e) {
+      showToast('创建失败: ' + e.message);
+    }
+    closeModal();
+  });
+}
+
+// Trash page
+async function renderTrash() {
+  renderBreadcrumb();
+  document.getElementById('content').innerHTML = '<div class="empty"><div class="empty-text">加载中...</div></div>';
+  // Simplified — show all files including trashed
+  try {
+    const allFiles = await apiJSON(`/api/files?parent=root`);
+    document.getElementById('content').innerHTML = `
+      <div class="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        <div class="empty-text">回收站为空</div>
+      </div>`;
+  } catch {
+    document.getElementById('content').innerHTML = '<div class="empty"><div class="empty-text">加载失败</div></div>';
+  }
+}
+
+// Stats page
+async function renderStats() {
+  renderBreadcrumb();
+  document.getElementById('content').innerHTML = '<div class="empty"><div class="empty-text">加载中...</div></div>';
+  try {
+    const stats = await apiJSON('/api/stats');
+    const dedupPct = (stats.dedup_ratio * 100).toFixed(1);
+    const savedBytes = stats.logical_bytes - stats.disk_bytes;
+    document.getElementById('content').innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-card-label">文件总数</div>
+          <div class="stat-card-value">${stats.total_files}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">分块总数</div>
+          <div class="stat-card-value">${stats.total_chunks}</div>
+          <div class="stat-card-sub">CID 内容寻址</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">逻辑存储</div>
+          <div class="stat-card-value">${formatSize(stats.logical_bytes)}</div>
+          <div class="stat-card-sub">用户可见大小</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">实际占用</div>
+          <div class="stat-card-value">${formatSize(stats.disk_bytes)}</div>
+          <div class="stat-card-sub">磁盘真实使用</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">去重节省</div>
+          <div class="stat-card-value">${formatSize(savedBytes)}</div>
+          <div class="stat-card-sub">去重率 ${dedupPct}%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">秒传索引</div>
+          <div class="stat-card-value">${stats.fast_lookup_entries}</div>
+          <div class="stat-card-sub">FastLookup 条目</div>
+        </div>
+      </div>
+      <div style="background:#fff;border-radius:12px;padding:24px;border:1px solid #e5e5e7">
+        <div style="font-weight:600;margin-bottom:12px">存储引擎信息</div>
+        <div style="font-size:13px;line-height:2;color:#444">
+          存储方式: IPFS 内容寻址 (CID SHA256 + multihash + base32)<br>
+          分块大小: 4 MB<br>
+          去重机制: 相同内容 = 相同 CID = 自动去重<br>
+          秒传机制: SHA1 + head256K SHA1 双重匹配<br>
+          加密支持: 零知识加密 (PBKDF2 + HMAC-CTR)<br>
+          断点续传: 支持 (.progress + .part 文件)<br>
+        </div>
+      </div>`;
+    // Update sidebar storage bar
+    document.getElementById('storageBar').style.display = 'block';
+    document.getElementById('storageText').textContent = `${formatSize(stats.disk_bytes)} / ${formatSize(stats.logical_bytes)}`;
+    const pct = stats.logical_bytes > 0 ? (stats.disk_bytes / stats.logical_bytes * 100) : 0;
+    document.getElementById('storageFill').style.width = pct + '%';
+  } catch (e) {
+    document.getElementById('content').innerHTML = `<div class="empty"><div class="empty-text">加载失败: ${e.message}</div></div>`;
+  }
+}
+
+// Sync page
+async function renderSync() {
+  renderBreadcrumb();
+  document.getElementById('content').innerHTML = '<div class="empty"><div class="empty-text">加载中...</div></div>';
+  try {
+    const [pairsResp, statusResp] = await Promise.all([
+      apiJSON('/api/sync/list'), apiJSON('/api/sync/status')
+    ]);
+    const pairs = pairsResp;
+    const status = statusResp;
+    let pairsHtml = '';
+    if (pairs.length === 0) {
+      pairsHtml = '<div class="empty"><div class="empty-text">暂无同步任务</div></div>';
+    } else {
+      pairsHtml = `<table class="file-list"><thead><tr>
+        <th>本地路径</th><th style="width:100px">方向</th><th style="width:140px">状态</th><th style="width:160px">上次同步</th><th style="width:120px"></th>
+      </tr></thead><tbody>`;
+      for (const p of pairs) {
+        const dirLabel = {upload:'↑ 上传', download:'↓ 下载', bidirectional:'↑↓ 双向'}[p.direction] || p.direction;
+        const statusColor = {idle:'#86868b', syncing:'#0071e3', error:'#ff3b30'}[p.status] || '#86868b';
+        pairsHtml += `<tr>
+          <td><div style="font-family:monospace;font-size:12px">${p.local_path}</div></td>
+          <td>${dirLabel}</td>
+          <td style="color:${statusColor}">${p.status}</td>
+          <td>${p.last_sync_ts ? formatDate(p.last_sync_ts) : '从未'}</td>
+          <td>
+            <button class="btn btn-sm" onclick="runSync('${p.id}')">立即同步</button>
+            <button class="btn btn-sm" onclick="deleteSync('${p.id}')" style="color:#ff3b30">删除</button>
+          </td>
+        </tr>`;
+      }
+      pairsHtml += '</tbody></table>';
+    }
+    document.getElementById('content').innerHTML = `
+      <div style="display:flex;gap:12px;margin-bottom:16px">
+        <button class="btn btn-primary" onclick="showAddSyncDialog()">添加同步任务</button>
+        <button class="btn" onclick="runAllSync()">全部同步</button>
+        <div style="flex:1"></div>
+        <div style="font-size:12px;color:#86868b;padding:8px 0">
+          同步对: ${status.total_pairs} | 同步中: ${status.syncing} | 错误: ${status.errors}
+        </div>
+      </div>
+      ${pairsHtml}`;
+  } catch (e) {
+    document.getElementById('content').innerHTML = `<div class="empty"><div class="empty-text">加载失败: ${e.message}</div></div>`;
+  }
+}
+
+function showAddSyncDialog() {
+  showModal('添加同步任务', `
+    <input type="text" class="modal-input" id="syncLocalPath" placeholder="本地文件夹路径 (如 C:\\Users\\Documents\\backup)">
+    <select class="modal-input" id="syncDirection">
+      <option value="upload">↑ 单向上传 (本地→云端)</option>
+      <option value="download">↓ 单向下载 (云端→本地)</option>
+      <option value="bidirectional">↑↓ 双向同步</option>
+    </select>
+    <input type="text" class="modal-input" id="syncCloudParent" placeholder="云端目录 ID (默认 root)" value="root">
+  `, async () => {
+    const localPath = document.getElementById('syncLocalPath').value.trim();
+    const direction = document.getElementById('syncDirection').value;
+    const cloudParent = document.getElementById('syncCloudParent').value.trim() || 'root';
+    if (!localPath) { showToast('请输入本地路径'); return; }
+    try {
+      await apiJSON('/api/sync/add', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ local_path: localPath, cloud_parent: cloudParent, direction })
+      });
+      showToast('同步任务已添加');
+      renderSync();
+    } catch(e) { showToast('添加失败: ' + e.message); }
+    closeModal();
+  });
+}
+
+async function runSync(pairId) {
+  showToast('正在同步...');
+  try {
+    const result = await apiJSON(`/api/sync/run/${pairId}`, { method: 'POST' });
+    showToast(`同步完成: 上传${result.uploaded} 下载${result.downloaded} 跳过${result.skipped}`);
+    renderSync();
+  } catch(e) { showToast('同步失败: ' + e.message); }
+}
+
+async function runAllSync() {
+  showToast('正在同步全部...');
+  try {
+    const result = await apiJSON('/api/sync/run-all', { method: 'POST' });
+    let totalUp = 0, totalDl = 0;
+    for (const r of result.results) { totalUp += r.uploaded||0; totalDl += r.downloaded||0; }
+    showToast(`全部同步完成: 上传${totalUp} 下载${totalDl}`);
+    renderSync();
+  } catch(e) { showToast('同步失败'); }
+}
+
+async function deleteSync(pairId) {
+  if (!confirm('确定删除此同步任务？')) return;
+  await apiJSON(`/api/sync/${pairId}`, { method: 'DELETE' });
+  showToast('已删除');
+  renderSync();
+}
+
+// Shares page
+async function renderShares() {
+  document.getElementById('breadcrumb').innerHTML = '<span class="breadcrumb-item">分享管理</span>';
+  document.getElementById('content').innerHTML = '<div class="empty"><div class="empty-text">加载中...</div></div>';
+  try {
+    const shares = await apiJSON('/api/shares');
+    if (shares.length === 0) {
+      document.getElementById('content').innerHTML = `
+        <div class="empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          <div class="empty-text">暂无分享链接</div>
+          <div style="margin-top:8px;font-size:12px;color:#aeaeb2">右键文件 → 创建分享</div>
+        </div>`;
+      return;
+    }
+    let html = `<table class="file-list"><thead><tr>
+      <th>文件名</th><th style="width:80px">密码</th><th style="width:100px">下载次数</th><th style="width:160px">创建时间</th><th style="width:60px"></th>
+    </tr></thead><tbody>`;
+    for (const s of shares) {
+      const shareUrl = `${location.origin}/api/share/${s.share_id}`;
+      html += `<tr>
+        <td><div class="file-name-cell">${ICONS.file}<span>${s.file_name}</span></div></td>
+        <td>${s.has_password ? '🔒' : '—'}</td>
+        <td>${s.download_count}${s.download_limit ? '/' + s.download_limit : ''}</td>
+        <td>${formatDate(s.created_ts)}</td>
+        <td>
+          <button class="btn btn-sm" onclick="copyShareLink('${s.share_id}')">复制链接</button>
+          <button class="btn btn-sm" onclick="deleteShare('${s.share_id}')" style="color:#ff3b30">删除</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('content').innerHTML = html;
+  } catch(e) {
+    document.getElementById('content').innerHTML = `<div class="empty"><div class="empty-text">加载失败</div></div>`;
+  }
+}
+
+async function showShareDialog(identity) {
+  const file = files.find(f => f.identity === identity);
+  if (!file) return;
+  showModal(`分享: ${file.name}`, `
+    <div style="margin-bottom:12px">
+      <label style="font-size:13px;color:#86868b">密码 (可选)</label>
+      <input type="text" class="modal-input" id="sharePassword" placeholder="留空则无密码">
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:13px;color:#86868b">过期时间 (小时，0=永久)</label>
+      <input type="number" class="modal-input" id="shareExpire" placeholder="24" value="24">
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:13px;color:#86868b">下载次数限制 (0=无限制)</label>
+      <input type="number" class="modal-input" id="shareLimit" placeholder="0" value="0">
+    </div>
+  `, async () => {
+    const password = document.getElementById('sharePassword').value.trim();
+    const expireHours = parseInt(document.getElementById('shareExpire').value) || 0;
+    const downloadLimit = parseInt(document.getElementById('shareLimit').value) || 0;
+    try {
+      const result = await apiJSON('/api/share', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ file_identity: identity, password, expire_hours: expireHours, download_limit: downloadLimit })
+      });
+      const shareUrl = `${location.origin}/api/share/${result.share_id}`;
+      closeModal();
+      showModal('分享链接已创建', `
+        <div style="text-align:center;padding:12px">
+          <div style="font-size:13px;color:#86868b;margin-bottom:8px">分享链接：</div>
+          <input type="text" class="modal-input" value="${shareUrl}" readonly onclick="this.select()" style="text-align:center;font-family:monospace">
+          <div style="margin-top:12px;font-size:12px;color:#86868b">
+            ${result.has_password ? '🔒 密码保护' : '公开访问'} | 
+            ${expireHours > 0 ? expireHours + '小时后过期' : '永久有效'}
+          </div>
+        </div>
+      `, null);
+    } catch(e) { showToast('创建分享失败'); }
+    closeModal();
+  });
+}
+
+function copyShareLink(shareId) {
+  const url = `${location.origin}/api/share/${shareId}`;
+  navigator.clipboard.writeText(url).then(() => showToast('链接已复制'));
+}
+
+async function deleteShare(shareId) {
+  if (!confirm('确定删除此分享链接？')) return;
+  await apiJSON(`/api/share/${shareId}`, { method: 'DELETE' });
+  showToast('已删除');
+  renderShares();
+}
+
+// Offline download page
+// Tickets page
+async function renderTickets() {
+  document.getElementById('breadcrumb').innerHTML = '<span class="breadcrumb-item">工单支持</span>';
+  document.getElementById('content').innerHTML = '<div class="empty"><div class="empty-text">加载中...</div></div>';
+  try {
+    const tickets = await apiJSON('/api/tickets');
+    let addBtn = `<button class="btn btn-primary" onclick="showTicketDialog()" style="margin-bottom:16px">+ 提交工单</button>`;
+    if (!tickets || tickets.length === 0) {
+      document.getElementById('content').innerHTML = addBtn + `
+        <div class="empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+          <div class="empty-text">暂无工单</div>
+          <div style="margin-top:8px;font-size:12px;color:#aeaeb2">遇到问题？提交工单获取支持</div>
+        </div>`;
+      return;
+    }
+    let html = addBtn + `<table class="file-list"><thead><tr>
+      <th>主题</th><th style="width:80px">优先级</th><th style="width:80px">状态</th><th style="width:140px">创建时间</th><th style="width:80px"></th>
+    </tr></thead><tbody>`;
+    const priorityLabel = {normal:'普通', high:'高', urgent:'紧急'};
+    const priorityColor = {normal:'#86868b', high:'#ff9500', urgent:'#ff3b30'};
+    const statusLabel = {open:'待处理', answered:'已回复', closed:'已关闭'};
+    const statusColor = {open:'#ff9500', answered:'#34c759', closed:'#86868b'};
+    for (const t of tickets) {
+      const pColor = priorityColor[t.priority] || '#86868b';
+      const sColor = statusColor[t.status] || '#86868b';
+      const ts = new Date(t.created_ts * 1000).toLocaleString('zh-CN');
+      html += `<tr onclick="viewTicket('${t.ticket_id}')">
+        <td style="font-weight:500">${escapeHtml(t.subject)}</td>
+        <td><span style="color:${pColor};font-size:12px">${priorityLabel[t.priority] || t.priority}</span></td>
+        <td><span style="color:${sColor};font-size:12px">${statusLabel[t.status] || t.status}</span></td>
+        <td style="font-size:12px;color:#86868b">${ts}</td>
+        <td><span style="color:#0071e3;font-size:12px">查看 ›</span></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('content').innerHTML = html;
+  } catch(e) {
+    document.getElementById('content').innerHTML = `<div class="empty"><div class="empty-text">加载失败: ${e.message}</div></div>`;
+  }
+}
+
+function showTicketDialog() {
+  showModal('提交工单', `
+    <input type="text" class="modal-input" id="ticketSubject" placeholder="问题描述（简述）" autofocus>
+    <select class="modal-input" id="ticketPriority" style="appearance:auto">
+      <option value="normal">普通</option>
+      <option value="high">高</option>
+      <option value="urgent">紧急</option>
+    </select>
+    <textarea class="modal-input" id="ticketBody" placeholder="详细描述..." rows="5" style="resize:vertical;font-family:inherit"></textarea>
+  `, async () => {
+    const subject = document.getElementById('ticketSubject').value.trim();
+    const body = document.getElementById('ticketBody').value.trim();
+    const priority = document.getElementById('ticketPriority').value;
+    if (!subject || !body) { showToast('请填写主题和描述'); return; }
+    try {
+      const result = await apiJSON('/api/ticket', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ subject, body, priority })
+      });
+      showToast('工单已提交: ' + result.ticket_id);
+      renderTickets();
+    } catch(e) { showToast('提交失败: ' + e.message); }
+    closeModal();
+  });
+}
+
+async function viewTicket(ticketId) {
+  try {
+    const t = await apiJSON(`/api/ticket/${ticketId}`);
+    const priorityLabel = {normal:'普通', high:'高', urgent:'紧急'};
+    const statusLabel = {open:'待处理', answered:'已回复', closed:'已关闭'};
+    const ts = new Date(t.created_ts * 1000).toLocaleString('zh-CN');
+    showModal('工单详情', `
+      <div style="margin-bottom:12px">
+        <div style="font-weight:600;font-size:15px;margin-bottom:4px">${escapeHtml(t.subject)}</div>
+        <div style="font-size:12px;color:#86868b">
+          ID: ${t.ticket_id} · ${priorityLabel[t.priority] || t.priority} · ${statusLabel[t.status] || t.status} · ${ts}
+        </div>
+      </div>
+      <div style="background:#f5f5f7;border-radius:8px;padding:12px;margin-bottom:12px;font-size:13px;line-height:1.6;white-space:pre-wrap">${escapeHtml(t.body)}</div>
+      ${t.reply ? `<div style="background:#e8f0fe;border-radius:8px;padding:12px;margin-bottom:12px"><div style="font-size:12px;color:#0071e3;font-weight:600;margin-bottom:4px">回复</div><div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${escapeHtml(t.reply)}</div></div>` : '<div style="font-size:12px;color:#86868b;margin-bottom:12px">暂无回复</div>'}
+      ${t.status !== 'closed' ? `<textarea class="modal-input" id="ticketReply" placeholder="追加补充..." rows="3" style="resize:vertical;font-family:inherit"></textarea>` : ''}
+    `, t.status !== 'closed' ? async () => {
+      const reply = document.getElementById('ticketReply').value.trim();
+      if (!reply) { showToast('请输入回复内容'); return; }
+      try {
+        await apiJSON(`/api/ticket/${ticketId}/reply`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ reply })
+        });
+        showToast('回复已提交');
+        closeModal();
+        viewTicket(ticketId);
+      } catch(e) { showToast('回复失败: ' + e.message); }
+    } : null);
+  } catch(e) {
+    showToast('加载工单失败: ' + e.message);
+  }
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Offline download page
+async function renderOffline() {
+  document.getElementById('breadcrumb').innerHTML = '<span class="breadcrumb-item">离线下载</span>';
+  document.getElementById('content').innerHTML = '<div class="empty"><div class="empty-text">加载中...</div></div>';
+  try {
+    const tasks = await apiJSON('/api/offline/list');
+    let addBtn = `<button class="btn btn-primary" onclick="showOfflineDialog()" style="margin-bottom:16px">+ 添加离线下载</button>`;
+    if (tasks.length === 0) {
+      document.getElementById('content').innerHTML = addBtn + `
+        <div class="empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <div class="empty-text">暂无离线下载任务</div>
+          <div style="margin-top:8px;font-size:12px;color:#aeaeb2">输入 URL，服务器后台下载并存入网盘</div>
+        </div>`;
+      return;
+    }
+    let html = addBtn + `<table class="file-list"><thead><tr>
+      <th>文件名</th><th style="width:200px">URL</th><th style="width:80px">状态</th><th style="width:120px">进度</th><th style="width:60px"></th>
+    </tr></thead><tbody>`;
+    for (const t of tasks) {
+      const statusText = {pending:'等待中', downloading:'下载中', storing:'入库中', completed:'已完成', failed:'失败', cancelled:'已取消'};
+      const statusColor = {pending:'#86868b', downloading:'#0071e3', storing:'#ffcc00', completed:'#34c759', failed:'#ff3b30', cancelled:'#86868b'}[t.status] || '#86868b';
+      const progress = t.progress ? t.progress.toFixed(0) + '%' : (t.status === 'completed' ? '100%' : '—');
+      html += `<tr>
+        <td>${t.name}</td>
+        <td style="font-family:monospace;font-size:11px;color:#86868b;max-width:200px;overflow:hidden;text-overflow:ellipsis">${t.url}</td>
+        <td style="color:${statusColor}">${statusText[t.status] || t.status}</td>
+        <td>
+          ${t.status === 'downloading' ? `<div class="progress-item-bar" style="width:100px"><div class="progress-item-bar-inner uploading" style="width:${t.progress||0}%"></div></div>` : progress}
+        </td>
+        <td>
+          ${t.status !== 'completed' ? `<button class="btn btn-sm" onclick="cancelOffline('${t.task_id}')" style="color:#ff3b30">取消</button>` : ''}
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('content').innerHTML = html;
+  } catch(e) {
+    document.getElementById('content').innerHTML = `<div class="empty"><div class="empty-text">加载失败</div></div>`;
+  }
+}
+
+function showOfflineDialog() {
+  showModal('添加离线下载', `
+    <input type="text" class="modal-input" id="offlineUrl" placeholder="magnet:?xt=urn:btih:… 或 https://…/file.zip 或 .torrent 链接" autofocus>
+    <input type="text" class="modal-input" id="offlineName" placeholder="保存名称（可选，BT 自动取种子名）">
+  `, async () => {
+    const url = document.getElementById('offlineUrl').value.trim();
+    const name = document.getElementById('offlineName').value.trim();
+    if (!url) { showToast('请输入 URL'); return; }
+    try {
+      const result = await apiJSON('/api/offline/add', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ url, name })
+      });
+      showToast('离线下载已添加: ' + result.name);
+      renderOffline();
+    } catch(e) { showToast('添加失败: ' + e.message); }
+    closeModal();
+  });
+}
+
+async function cancelOffline(taskId) {
+  await apiJSON(`/api/offline/${taskId}`, { method: 'DELETE' });
+  showToast('已取消');
+  renderOffline();
+}
+
+// Settings page
+function renderSettings() {
+  renderBreadcrumb();
+  apiJSON('/api/endpoints').then(ep => {
+    const a = document.getElementById('ep-sftp');
+    if (a) a.textContent = ep.sftp;
+    const st = document.getElementById('ep-sftp-state');
+    if (st) { st.textContent = ep.sftp_enabled ? '已启用 ✓' : '未启动'; st.style.color = ep.sftp_enabled ? '#34c759' : '#ff3b30'; }
+    const b = document.getElementById('ep-slices');
+    if (b) b.textContent = ep.slices + '/ipfs/blocks/<a>/<b>/<cid>?auth_key=…';
+  }).catch(() => {});
+  document.getElementById('content').innerHTML = `
+    <div style="max-width:600px">
+      <div style="background:#fff;border-radius:12px;padding:24px;border:1px solid #e5e5e7;margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:16px">账户</div>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #f5f5f7">
+          <div style="width:48px;height:48px;border-radius:50%;background:#0071e3;color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:600">U</div>
+          <div style="flex:1">
+            <div style="font-weight:500">${localStorage.getItem('mydrive_user') || '本地用户'}</div>
+            <div style="font-size:12px;color:#34c759">已登录 · 独立存储空间</div>
+          </div>
+          <button class="btn btn-sm" onclick="logout()">退出登录</button>
+        </div>
+      </div>
+      <div style="background:#fff;border-radius:12px;padding:24px;border:1px solid #e5e5e7;margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:16px">存储</div>
+        <div style="font-size:13px;line-height:2.4">
+          <div style="display:flex;justify-content:space-between;cursor:pointer;padding:4px 0" onclick="navigate('stats')">
+            <span>存储统计</span><span style="color:#86868b">›</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;cursor:pointer;padding:4px 0" onclick="showToast('清理重复文件...')">
+            <span>清理重复文件</span><span style="color:#86868b">›</span>
+          </div>
+        </div>
+      </div>
+      <div style="background:#fff;border-radius:12px;padding:24px;border:1px solid #e5e5e7;margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:16px">网络协议</div>
+        <div style="font-size:13px;line-height:2.4">
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span>WebDAV</span><span style="color:#34c759">已启用 ✓</span>
+          </div>
+          <div style="font-size:11px;color:#86868b;padding:0 0 8px;font-family:monospace">
+            挂载: net use Z: http://127.0.0.1:8765/webdav
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span>P2P 分块下载 (WebRTC)</span><span style="color:#34c759">已启用 ✓</span>
+          </div>
+          <div style="font-size:11px;color:#86868b;padding:0 0 8px;font-family:monospace">
+            WebSocket: ws://127.0.0.1:8765/ws/p2p
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span>SFTP</span><span style="color:#34c759" id="ep-sftp-state">已启用 ✓</span>
+          </div>
+          <div style="font-size:11px;color:#86868b;padding:0 0 8px;font-family:monospace" id="ep-sftp">sftp://127.0.0.1:2022</div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span>切片 CDN（slices）</span><span style="color:#34c759">已启用 ✓</span>
+          </div>
+          <div style="font-size:11px;color:#86868b;padding:0 0 8px;font-family:monospace" id="ep-slices">/ipfs/blocks/2/…</div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span>离线下载</span><span style="color:#34c759">已启用 ✓</span>
+          </div>
+        </div>
+      </div>
+      <div style="background:#fff;border-radius:12px;padding:24px;border:1px solid #e5e5e7;margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:16px">安全</div>
+        <div style="font-size:13px;line-height:2.4">
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span>零知识加密</span><span style="color:#34c759">PBKDF2 + HMAC-CTR</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span>内容校验</span><span style="color:#34c759">CID (SHA256 multihash)</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span>断点续传</span><span style="color:#34c759">.progress + .part</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span>秒传</span><span style="color:#34c759">SHA1 + head256K</span>
+          </div>
+        </div>
+      </div>
+      <div style="background:#fff;border-radius:12px;padding:24px;border:1px solid #e5e5e7">
+        <div style="font-weight:600;margin-bottom:16px">关于</div>
+        <div style="font-size:13px;color:#86868b;line-height:1.8">
+          MyDrive v0.2.0<br>
+          基于 IPFS 内容寻址的去中心化网盘<br>
+          存储引擎: CID (SHA256 + multihash + base32)<br>
+          支持秒传、断点续传、零知识加密
+        </div>
+      </div>
+    </div>`;
+}
+
+// Modal
+function showModal(title, body, onConfirm) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modalOverlay';
+  overlay.innerHTML = `
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">${title}</div>
+      <div class="modal-body">${body}</div>
+      <div class="modal-footer">
+        <button class="btn btn-sm" onclick="closeModal()">取消</button>
+        ${onConfirm ? '<button class="btn btn-primary btn-sm" id="modalConfirm">确定</button>' : ''}
+      </div>
+    </div>`;
+  overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
+  document.body.appendChild(overlay);
+  if (onConfirm) {
+    document.getElementById('modalConfirm').onclick = onConfirm;
+  }
+  // Auto-focus first input
+  setTimeout(() => {
+    const input = overlay.querySelector('input');
+    if (input) input.focus();
+  }, 50);
+}
+
+function closeModal() {
+  const overlay = document.getElementById('modalOverlay');
+  if (overlay) overlay.remove();
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const overlay = document.getElementById('previewOverlay');
+    if (overlay) overlay.remove();
+    closeModal();
+  }
+});
+
+// ==================== P2P (WebRTC DataChannel) ====================
+// 服务器只做 SDP/ICE 信令；分块数据走 DataChannel 直连，失败自动回退 HTTP。
+const P2P = {
+  ws: null, peerId: '', pcs: new Map(), channels: new Map(),
+  enabled: true, announced: new Set(),
+};
+
+function p2pSend(obj) {
+  const ws = P2P.ws;
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+}
+
+function p2pConnect() {
+  if (P2P.ws && P2P.ws.readyState <= 1) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/ws/p2p?access_token=${encodeURIComponent(TOKEN)}`);
+    P2P.ws = ws;
+    const timer = setTimeout(() => reject(new Error('信令超时')), 5000);
+    ws.onmessage = (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type === 'registered') {
+        P2P.peerId = msg.peer_id;
+        clearTimeout(timer);
+        resolve();
+      } else if (msg.type === 'signal') {
+        handleP2PSignal(msg).catch(e => console.warn('信令处理失败', e));
+      }
+    };
+    ws.onclose = () => { P2P.ws = null; P2P.channels.clear(); };
+    ws.onerror = () => { clearTimeout(timer); reject(new Error('信令连接失败')); };
+  });
+}
+
+function p2pAnnounce(cids) {
+  const fresh = cids.filter(c => c && !P2P.announced.has(c));
+  if (!fresh.length) return;
+  fresh.forEach(c => P2P.announced.add(c));
+  p2pSend({ type: 'announce', cids: fresh });
+}
+
+async function p2pPeersForChunk(cid) {
+  try {
+    const data = await apiJSON(`/api/p2p/peers/${encodeURIComponent(cid)}`);
+    return (data.peers || []).filter(p => p.peer_id !== P2P.peerId);
+  } catch {
+    return [];
+  }
+}
+
+function p2pNewConnection(peerId) {
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] });
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      p2pSend({ type: 'signal', to: peerId, signal_type: 'ice', data: { candidate: e.candidate } });
+    }
+  };
+  P2P.pcs.set(peerId, pc);
+  return pc;
+}
+
+// Serving side: answer chunk requests coming from another browser tab/device
+function p2pAttachServingChannel(ch) {
+  ch.binaryType = 'arraybuffer';
+  ch.onmessage = async (ev) => {
+    if (typeof ev.data !== 'string') return;
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.t !== 'get') return;
+    try {
+      const resp = await fetch(`${API}/api/chunk/${encodeURIComponent(msg.cid)}`, { headers: authHeaders() });
+      if (!resp.ok) throw new Error(`chunk ${resp.status}`);
+      const buf = await resp.arrayBuffer();
+      ch.send(JSON.stringify({ t: 'data', cid: msg.cid, rid: msg.rid, total: buf.byteLength }));
+      const SLICE = 128 * 1024;
+      for (let off = 0; off < buf.byteLength; off += SLICE) {
+        ch.send(buf.slice(off, Math.min(off + SLICE, buf.byteLength)));
+      }
+    } catch (e) {
+      ch.send(JSON.stringify({ t: 'error', rid: msg.rid, message: String(e.message || e) }));
+    }
+  };
+}
+
+async function p2pFetchChunk(peerId, cid, timeoutMs = 6000) {
+  let ch = P2P.channels.get(peerId);
+  if (!ch || ch.readyState !== 'open') {
+    const pc = p2pNewConnection(peerId);
+    ch = pc.createDataChannel('chunks', { ordered: true });
+    ch.binaryType = 'arraybuffer';
+    P2P.channels.set(peerId, ch);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    p2pSend({ type: 'signal', to: peerId, signal_type: 'offer', data: { sdp: pc.localDescription } });
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('DataChannel 超时')), timeoutMs);
+      ch.onopen = () => { clearTimeout(t); resolve(); };
+      ch.onerror = () => { clearTimeout(t); reject(new Error('DataChannel 错误')); };
+    });
+  }
+
+  const rid = Math.random().toString(36).slice(2);
+  return new Promise((resolve, reject) => {
+    const state = { parts: [], received: 0, total: 0, timer: null };
+    state.timer = setTimeout(() => reject(new Error('分块传输超时')), timeoutMs);
+    ch.onmessage = (ev) => {
+      if (typeof ev.data === 'string') {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.rid !== rid) return;
+        if (msg.t === 'data') { state.total = msg.total; state.parts = []; state.received = 0; }
+        else if (msg.t === 'error') { clearTimeout(state.timer); reject(new Error(msg.message)); }
+        return;
+      }
+      state.parts.push(ev.data);
+      state.received += ev.data.byteLength;
+      if (state.total && state.received >= state.total) {
+        clearTimeout(state.timer);
+        const merged = new Uint8Array(state.received);
+        let off = 0;
+        for (const part of state.parts) { merged.set(new Uint8Array(part), off); off += part.byteLength; }
+        resolve(merged.buffer);
+      }
+    };
+    ch.send(JSON.stringify({ t: 'get', cid, rid }));
+  });
+}
+
+async function handleP2PSignal(msg) {
+  const from = msg.from;
+  const pc = P2P.pcs.get(from) || p2pNewConnection(from);
+  if (msg.signal_type === 'offer') {
+    pc.ondatachannel = (e) => p2pAttachServingChannel(e.channel);
+    await pc.setRemoteDescription(msg.data.sdp);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    p2pSend({ type: 'signal', to: from, signal_type: 'answer', data: { sdp: pc.localDescription } });
+  } else if (msg.signal_type === 'answer') {
+    await pc.setRemoteDescription(msg.data.sdp);
+  } else if (msg.signal_type === 'ice') {
+    try { await pc.addIceCandidate(msg.data.candidate); } catch {}
+  }
+}
+
+// Try assembling a file from peers first. Returns false when no peer could help.
+async function p2pDownload(identity) {
+  await p2pConnect();
+  const info = await apiJSON(`/api/files/${identity}/chunks`);
+  const chunks = info.chunks || [];
+  if (!chunks.length) return false;
+
+  p2pAnnounce(chunks.map(c => c.cid));
+
+  const parts = [];
+  let usedPeer = false;
+  showToast('P2P 多源下载中...');
+
+  for (const c of chunks) {
+    const peers = await p2pPeersForChunk(c.cid);
+    let buf = null;
+    for (const p of peers.slice(0, 2)) {
+      try {
+        buf = await p2pFetchChunk(p.peer_id, c.cid);
+        usedPeer = true;
+        break;
+      } catch (e) {
+        console.warn('peer 分块失败，回退', e);
+      }
+    }
+    if (!buf) {
+      const resp = await api(`/api/chunk/${encodeURIComponent(c.cid)}`);
+      buf = await resp.arrayBuffer();
+    }
+    parts.push(buf);
+  }
+
+  if (!usedPeer) return false;
+
+  const blob = new Blob(parts, { type: 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = info.name || 'download';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  showToast('P2P 下载完成');
+  return true;
+}
+
+// Init — verify the stored token before showing the workspace
+(async function bootstrap() {
+  if (!TOKEN) { showAuth(true); return; }
+  try {
+    const me = await apiJSON('/api/auth/me');
+    localStorage.setItem('mydrive_user', me.username);
+    showAuth(false);
+    navigate('files');
+  } catch (e) {
+    showAuth(true);
+  }
+})();
+</script>
+</body>
+</html>
