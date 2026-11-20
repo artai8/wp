@@ -55,9 +55,10 @@ class RateLimiter:
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Applies per-IP rate limiting (stricter on /api/auth/*)."""
 
-    def __init__(self, app, limiter: RateLimiter):
+    def __init__(self, app, limiter: RateLimiter, cluster=None):
         super().__init__(app)
         self.limiter = limiter
+        self.cluster = cluster
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -69,7 +70,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         is_auth = path.startswith("/api/auth/")
         limit = self.limiter.auth_rpm if is_auth else self.limiter.default_rpm
         bucket_key = f"{'auth' if is_auth else 'api'}:{ip}"
-        ok, retry = self.limiter.allow(bucket_key, limit)
+        dist = self.cluster.rate_limit_allow(bucket_key, limit, 60) if self.cluster else None
+        ok, retry = dist if dist is not None else self.limiter.allow(bucket_key, limit)
         if not ok:
             return JSONResponse(
                 status_code=429,

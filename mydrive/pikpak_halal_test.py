@@ -312,6 +312,95 @@ def run_all():
     alice_ops = client.get("/api/admin/dashboard", headers=hdr_a).json()
     ok("管理员运维后台统计营收与审计日志", alice_ops["revenue"]["total_revenue_cents"] == 1990 and len(alice_ops["recent_logs"]) >= 3, str(alice_ops["revenue"]))
 
+
+    print("== 10) 多实例集群基础设施 (Redis RESP2 分布式锁/限流 + PG Schema + Flutter 原生客户端) ==")
+    import socket, threading as _th
+    from cluster_infra import RedisClient, ClusterCoordinator
+
+    # Spin up a tiny in-process mock RESP2 Redis server to verify our zero-dependency RedisClient
+    store = {}
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+    rport = srv.getsockname()[1]
+    stop_ev = _th.Event()
+
+    def _mock_redis():
+        srv.settimeout(0.2)
+        while not stop_ev.is_set():
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            with conn:
+                data = conn.recv(4096).decode("utf-8", errors="ignore").split("\r\n")
+                args = [data[i] for i in range(2, len(data), 2) if i < len(data) and data[i-1].startswith("$")]
+                if not args:
+                    continue
+                cmd = args[0].upper()
+                if cmd == "PING":
+                    conn.sendall(b"+PONG\r\n")
+                elif cmd == "SET":
+                    k, v = args[1], args[2]
+                    nx = "NX" in [a.upper() for a in args[3:]]
+                    if nx and k in store:
+                        conn.sendall(b"$-1\r\n")
+                    else:
+                        store[k] = v
+                        conn.sendall(b"+OK\r\n")
+                elif cmd == "GET":
+                    v = store.get(args[1])
+                    if v is None:
+                        conn.sendall(b"$-1\r\n")
+                    else:
+                        b = v.encode()
+                        conn.sendall(f"${len(b)}\r\n".encode() + b + b"\r\n")
+                elif cmd == "DEL":
+                    n = 1 if store.pop(args[1], None) is not None else 0
+                    conn.sendall(f":{n}\r\n".encode())
+                elif cmd == "INCR":
+                    n = int(store.get(args[1], "0")) + 1
+                    store[args[1]] = str(n)
+                    conn.sendall(f":{n}\r\n".encode())
+                elif cmd == "EXPIRE":
+                    conn.sendall(b":1\r\n")
+
+    t_r = _th.Thread(target=_mock_redis, daemon=True)
+    t_r.start()
+    try:
+        rc = RedisClient(f"redis://127.0.0.1:{rport}/0")
+        ok("零依赖 Redis RESP2 PING 通畅", rc.ping() is True)
+        os.environ["REDIS_URL"] = f"redis://127.0.0.1:{rport}/0"
+        cc = ClusterCoordinator()
+        tok1 = cc.acquire_lock("hls_job_1", ttl_sec=30)
+        tok2 = cc.acquire_lock("hls_job_1", ttl_sec=30)
+        ok("Redis 分布式锁互斥生效", tok1 is not None and tok2 is None)
+        cc.release_lock("hls_job_1", tok1)
+        tok3 = cc.acquire_lock("hls_job_1", ttl_sec=30)
+        ok("Redis 分布式锁释放后可重入", tok3 is not None)
+        rl1 = cc.rate_limit_allow("ip:1.2.3.4", limit=2, window_sec=60)
+        rl2 = cc.rate_limit_allow("ip:1.2.3.4", limit=2, window_sec=60)
+        rl3 = cc.rate_limit_allow("ip:1.2.3.4", limit=2, window_sec=60)
+        ok("Redis 跨实例分布式限流触发", rl1[0] is True and rl2[0] is True and rl3[0] is False)
+        os.environ.pop("REDIS_URL", None)
+    finally:
+        stop_ev.set()
+        srv.close()
+
+    h_cluster = client.get("/api/health").json()
+    ok("/api/health 返回集群状态字段", "cluster" in h_cluster and "instance_id" in h_cluster["cluster"])
+
+    proj_root = Path(__file__).resolve().parent.parent
+    ok("PostgreSQL 集群建表脚本与编排文件存在",
+       (proj_root / "deploy" / "postgres-schema.sql").exists() and
+       (proj_root / "deploy" / "docker-compose.cluster.yml").exists())
+    ok("Flutter 独立多端原生客户端工程完整",
+       (proj_root / "client_flutter" / "pubspec.yaml").exists() and
+       (proj_root / "client_flutter" / "lib" / "main.dart").exists() and
+       (proj_root / "client_flutter" / "lib" / "pages" / "player_page.dart").exists())
+
     print(f"\n结果: {passed} passed, 0 failed")
     shutil.rmtree(_TMP, ignore_errors=True)
 

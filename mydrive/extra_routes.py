@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from media_service import MediaService
 from telegram_bot import TelegramBotAdapter
 from commercial_manager import CommercialManager, enable_sqlite_wal
+from cluster_infra import ClusterCoordinator
 from commercial_security import AuditLogger, RateLimiter, RateLimitMiddleware, collect_health, export_prometheus_metrics
 from tiered_storage import S3CompatBackend
 
@@ -154,8 +155,9 @@ def mount_extra_routes(
     tg_bot = TelegramBotAdapter(engine, auth, offline_engine, storage_root)
     commercial = CommercialManager(storage_root)
     audit = AuditLogger(storage_root)
+    cluster = ClusterCoordinator()
     if os.environ.get('RATE_LIMIT_ENABLE', '1').lower() not in ('0', 'false', 'no'):
-        app.add_middleware(RateLimitMiddleware, limiter=RateLimiter())
+        app.add_middleware(RateLimitMiddleware, limiter=RateLimiter(), cluster=cluster)
     # Enable SQLite WAL mode for multi-user concurrency across core DBs
     enable_sqlite_wal(engine.db_path)
     if hasattr(auth, "db_path"):
@@ -750,7 +752,9 @@ loadShare();
 
     @app.get("/api/health")
     async def health_check():
-        return collect_health(engine, offline_engine, media, storage_root)
+        h = collect_health(engine, offline_engine, media, storage_root)
+        h["cluster"] = cluster.status()
+        return h
 
     @app.get("/api/metrics")
     async def prometheus_metrics():
@@ -774,6 +778,7 @@ loadShare();
             "revenue": rev,
             "blocked_cids": commercial.list_blocked_cids(),
             "health": health,
+            "cluster": cluster.status(),
             "recent_logs": audit.recent(limit=20),
         }
 
@@ -784,4 +789,4 @@ loadShare();
             return FileResponse(mf, media_type="application/manifest+json")
         raise HTTPException(status_code=404, detail="manifest not found")
 
-    return {"media": media, "telegram": tg_bot, "commercial": commercial, "audit": audit}
+    return {"media": media, "telegram": tg_bot, "commercial": commercial, "audit": audit, "cluster": cluster}
