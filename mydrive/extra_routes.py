@@ -199,17 +199,22 @@ def mount_extra_routes(
         if not _is_admin_user(request):
             raise HTTPException(status_code=403, detail="需要管理员权限（可通过 ADMIN_USERS 环境变量配置）")
 
-    # Background maintenance daemon: auto-purge expired trash + GC orphan chunks
+    # Background maintenance daemon: uses cluster distributed lock so only 1 replica runs GC
     def _maintenance_loop():
-        import threading, time as _t
+        import time as _t
         interval = max(60, int(os.environ.get("MAINTENANCE_INTERVAL_SEC", "3600")))
         while True:
             _t.sleep(interval)
+            tok = cluster.acquire_lock("maintenance_gc", ttl_sec=300)
+            if not tok:
+                continue
             try:
                 engine.purge_expired_trash()
                 engine.gc_chunks()
             except Exception:
                 pass
+            finally:
+                cluster.release_lock("maintenance_gc", tok)
     import threading as _th
     _th.Thread(target=_maintenance_loop, daemon=True, name="mydrive-maintenance").start()
 
@@ -652,6 +657,9 @@ loadShare();
         uid = caller_id_fn(request) or "anonymous"
         try:
             res = commercial.redeem_code(uid, req.code)
+            if hasattr(auth, 'extend_quota'):
+                try: auth.extend_quota(uid, int(res.get('storage_quota_bytes', 0)))
+                except Exception: pass
             audit.log('vip.redeem', uid, req.code, request.client.host if request.client else '', res.get('plan', ''))
             return res
         except ValueError as e:
@@ -745,6 +753,9 @@ loadShare();
         order_no = data.get("order_no", "")
         try:
             res = commercial.mark_order_paid(order_no)
+            if hasattr(auth, 'extend_quota'):
+                try: auth.extend_quota(res['user_id'], int(res.get('membership', {}).get('storage_quota_bytes', 0)))
+                except Exception: pass
             audit.log("order.paid", res["user_id"], order_no, request.client.host if request.client else "", res["plan"])
             return {"ok": True, "order": res}
         except ValueError as e:

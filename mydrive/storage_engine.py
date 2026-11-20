@@ -26,6 +26,7 @@ Storage layout on disk:
 import os
 import json
 import sqlite3
+from db_adapter import connect_db
 import hashlib
 import time
 import uuid
@@ -182,7 +183,7 @@ class StorageEngine:
         self._init_versions_table()
 
     def _init_versions_table(self):
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("""
             CREATE TABLE IF NOT EXISTS file_versions (
@@ -202,7 +203,7 @@ class StorageEngine:
 
     def _init_db(self):
         """Initialize SQLite database with all tables."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
 
         # FastLookup table — for instant transfer (秒传)
@@ -515,7 +516,7 @@ class StorageEngine:
         owns, so 秒传 costs one metadata write.
         """
         uid = user_id or "anonymous"
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "SELECT identity FROM files WHERE content_identity = ? AND user_id = ? "
@@ -589,7 +590,7 @@ class StorageEngine:
 
     def chunk_size_of(self, cid: str) -> Optional[int]:
         """Size of an already-stored slice, or None when it is missing."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT size FROM chunks WHERE cid = ?", (cid,))
         row = c.fetchone()
@@ -678,7 +679,7 @@ class StorageEngine:
         chunk_path.write_bytes(encoded)
 
         # Record in DB
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         try:
             c.execute(
@@ -727,7 +728,7 @@ class StorageEngine:
                 return decode_chunk(raw, fmt)
 
         # Try inline data in DB
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT inline_data FROM chunks WHERE cid = ?", (cid,))
         row = c.fetchone()
@@ -752,7 +753,7 @@ class StorageEngine:
             raw = self.tiered.hydrate_from_cold(cid)
             if raw is not None:
                 return raw
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT inline_data FROM chunks WHERE cid = ?", (cid,))
         row = c.fetchone()
@@ -766,7 +767,7 @@ class StorageEngine:
         cached = self._fmt_cache.get(cid)
         if cached is not None:
             return cached
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         try:
             c.execute("SELECT format FROM chunks WHERE cid = ?", (cid,))
@@ -786,7 +787,7 @@ class StorageEngine:
         path = self._chunk_path(cid)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(encode_chunk(data, fmt))
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("UPDATE chunks SET format = ? WHERE cid = ?", (int(fmt), cid))
         conn.commit()
@@ -838,7 +839,7 @@ class StorageEngine:
         ``user_id`` is accepted for call-site compatibility but does not scope
         the lookup.
         """
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
 
         # Fast check: head_sha1 + size (catches 99% of duplicates quickly)
@@ -865,7 +866,7 @@ class StorageEngine:
                          content_identity: str, name: str,
                          user_id: str = "anonymous"):
         """Add an entry to the FastLookup index, scoped to the owning user."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "INSERT OR IGNORE INTO fast_lookup (identity, sha1, head_sha1, file_size, content_identity, name, create_ts, user_id) "
@@ -906,7 +907,7 @@ class StorageEngine:
     def list_files(self, parent: str = "root", include_trashed: bool = False,
                    user_id: str = None) -> List[FileMeta]:
         """List files in a directory, optionally scoped to one user."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         params = [parent]
         user_clause = ""
@@ -956,7 +957,7 @@ class StorageEngine:
         if only_trashed:
             clause = clause.replace(" AND trashed = 0", "") + " AND trashed = 1"
 
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM files WHERE parent = ? AND deleted = 0" + clause, params)
         total = c.fetchone()[0]
@@ -998,7 +999,7 @@ class StorageEngine:
             params.append(user_id)
         where = "WHERE deleted = 0 AND trashed = 0 AND (name LIKE ? OR sort_name LIKE ?)" + clause
 
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM files " + where, params)
         total = c.fetchone()[0]
@@ -1216,7 +1217,7 @@ class StorageEngine:
 
     def _db_insert_file(self, meta: FileMeta):
         """Insert file record into database."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "INSERT OR REPLACE INTO files (identity, parent, name, path, size, mime_type, "
@@ -1275,7 +1276,7 @@ class StorageEngine:
         if user_id is not None and not self.get_file_meta(identity, user_id=user_id):
             return
         if permanent:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = connect_db(self.db_path)
             c = conn.cursor()
             c.execute("UPDATE files SET deleted = 1 WHERE identity = ?", (identity,))
             conn.commit()
@@ -1285,7 +1286,7 @@ class StorageEngine:
             if meta_path.exists():
                 meta_path.unlink()
         else:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = connect_db(self.db_path)
             c = conn.cursor()
             c.execute("UPDATE files SET trashed = 1, delete_ts = ? WHERE identity = ?", (now_ms(), identity))
             conn.commit()
@@ -1295,7 +1296,7 @@ class StorageEngine:
         """Return True when a user owns at least one file referencing this chunk."""
         if user_id is None:
             return True
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "SELECT 1 FROM file_chunks fc JOIN files f ON f.identity = fc.file_identity "
@@ -1315,7 +1316,7 @@ class StorageEngine:
 
     def get_storage_stats(self, user_id: str = None) -> dict:
         """Get storage statistics, optionally scoped to one user."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         params = [] if user_id is None else [user_id]
         where_user = "" if user_id is None else " AND f.user_id = ?"
@@ -1374,7 +1375,7 @@ class StorageEngine:
     def list_by_category(self, category: str, user_id: str = None, limit: int = 200) -> List[FileMeta]:
         """Smart category views: video, image, audio, doc, archive, starred."""
         cat = (category or "").lower()
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         params: list = []
         where = "deleted = 0 AND trashed = 0 AND is_dir = 0"
@@ -1424,7 +1425,7 @@ class StorageEngine:
         new_val = (not meta.starred) if starred is None else bool(starred)
         meta.starred = new_val
         meta.update_ts = now_ms()
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("UPDATE files SET starred = ?, update_ts = ? WHERE identity = ?", (1 if new_val else 0, meta.update_ts, identity))
         conn.commit()
@@ -1439,7 +1440,7 @@ class StorageEngine:
             return None
         chunks_json = json.dumps([asdict(ch) for ch in meta.chunks])
         ts = now_ms()
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "INSERT INTO file_versions (file_identity, version, content_identity, size, chunks_json, create_ts, note) "
@@ -1456,7 +1457,7 @@ class StorageEngine:
         meta = self.get_file_meta(identity, user_id=user_id)
         if not meta:
             return []
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "SELECT id, version, content_identity, size, create_ts, note FROM file_versions "
@@ -1475,7 +1476,7 @@ class StorageEngine:
         meta = self.get_file_meta(identity, user_id=user_id)
         if not meta or meta.is_dir:
             return None
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "SELECT version, content_identity, size, chunks_json FROM file_versions "
@@ -1494,7 +1495,7 @@ class StorageEngine:
         meta.chunks = [ChunkInfo(**ch) for ch in chunks_data]
         meta.version += 1
         meta.update_ts = now_ms()
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "UPDATE files SET content_identity = ?, size = ?, version = ?, update_ts = ? WHERE identity = ?",
@@ -1514,7 +1515,7 @@ class StorageEngine:
 
     def empty_trash(self, user_id: str = None) -> dict:
         """Permanently delete all trashed files for a user and run chunk GC."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         if user_id is not None:
             c.execute("SELECT identity FROM files WHERE trashed = 1 AND deleted = 0 AND user_id = ?", (user_id,))
@@ -1534,7 +1535,7 @@ class StorageEngine:
         if retention_days <= 0:
             return {"deleted_files": 0, "reclaimed_chunks": 0, "reclaimed_bytes": 0}
         cutoff_ms = now_ms() - retention_days * 86400 * 1000
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "SELECT identity FROM files WHERE trashed = 1 AND deleted = 0 "
@@ -1550,7 +1551,7 @@ class StorageEngine:
 
     def gc_chunks(self) -> dict:
         """Garbage-collect unreferenced chunks from local disk and cold storage."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         # Collect all CIDs still referenced by live files
         c.execute(

@@ -22,6 +22,7 @@ import hashlib
 import hmac
 import base64
 import sqlite3
+from db_adapter import connect_db
 import secrets
 from pathlib import Path
 from typing import Optional, Dict
@@ -40,7 +41,7 @@ class AuthManager:
         self._init_db()
 
     def _init_db(self):
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -132,7 +133,7 @@ class AuthManager:
         # 32 hex chars — same identity format the v6 API uses everywhere
         user_id = uuid.uuid4().hex
 
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         try:
             c.execute(
@@ -149,7 +150,7 @@ class AuthManager:
         return {"success": True, **tokens, "user_id": user_id, "username": username}
 
     def login(self, username: str, password: str) -> dict:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT user_id, password_hash, password_salt FROM users WHERE username = ?", (username,))
         row = c.fetchone()
@@ -171,7 +172,7 @@ class AuthManager:
         access_token = self._make_jwt(user_id, username, expires_in=3600)
         refresh_token = secrets.token_urlsafe(32)
 
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "INSERT INTO refresh_tokens (token, user_id, created_ts, expires_ts) VALUES (?, ?, ?, ?)",
@@ -230,7 +231,7 @@ class AuthManager:
         return {"user_id": payload["user_id"], "username": payload["username"]}
 
     def refresh(self, refresh_token: str) -> dict:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT user_id, expires_ts FROM refresh_tokens WHERE token = ?", (refresh_token,))
         row = c.fetchone()
@@ -252,7 +253,7 @@ class AuthManager:
             return {"success": False, "error": "User not found"}
 
         # Delete old refresh token (rotation)
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("DELETE FROM refresh_tokens WHERE token = ?", (refresh_token,))
         conn.commit()
@@ -268,7 +269,7 @@ class AuthManager:
         user_code = self._generate_user_code()
         now = int(time.time())
 
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "INSERT INTO device_codes (device_code, user_code, client_id, status, created_ts, expires_ts) "
@@ -297,7 +298,7 @@ class AuthManager:
         if not login_result.get("success"):
             return login_result
 
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT expires_ts FROM device_codes WHERE device_code = ? AND status = 'pending'", (device_code,))
         row = c.fetchone()
@@ -318,7 +319,7 @@ class AuthManager:
         return {"success": True, "message": "Device authorized"}
 
     def poll_device_code(self, device_code: str) -> dict:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT status, access_token, refresh_token, expires_ts FROM device_codes WHERE device_code = ?",
                   (device_code,))
@@ -346,7 +347,7 @@ class AuthManager:
 
     def get_user(self, user_id: str) -> Optional[Dict]:
         """Public user record (no password material)."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "SELECT user_id, username, created_ts, bytes_quota, bytes_used FROM users WHERE user_id = ?",
@@ -362,7 +363,7 @@ class AuthManager:
         }
 
     def get_quota(self, user_id: str) -> dict:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT bytes_quota, bytes_used FROM users WHERE user_id = ?", (user_id,))
         row = c.fetchone()
@@ -372,7 +373,7 @@ class AuthManager:
         return {"quota": row[0], "used": row[1]}
 
     def update_usage(self, user_id: str, delta_bytes: int):
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("UPDATE users SET bytes_used = bytes_used + ? WHERE user_id = ?", (delta_bytes, user_id))
         conn.commit()
@@ -384,7 +385,7 @@ class AuthManager:
         """v6 ``PubUser.ChangePassword`` — verify old, set new, revoke sessions."""
         if len(new_password or "") < 6:
             return {"success": False, "error": "Password too short"}
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT username, password_hash, password_salt FROM users WHERE user_id = ?", (user_id,))
         row = c.fetchone()
@@ -409,7 +410,7 @@ class AuthManager:
         """v6 ``PubUser.ResetPassword`` — password reset by identity (+ SMS code when bound)."""
         if len(new_password or "") < 6:
             return {"success": False, "error": "Password too short"}
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT user_id FROM users WHERE username = ?", (username,))
         row = c.fetchone()
@@ -437,7 +438,7 @@ class AuthManager:
 
     def delete_user(self, user_id: str, password: str = "") -> dict:
         """v6 ``PubUser.Delete`` — drop the account and every session."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT username, password_hash, password_salt FROM users WHERE user_id = ?", (user_id,))
         row = c.fetchone()
@@ -456,7 +457,7 @@ class AuthManager:
 
     def logoff(self, refresh_token: str = "", user_id: str = "") -> dict:
         """v6 ``PubUser.Logoff`` — revoke one refresh token (or all of a user's)."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         if refresh_token:
             c.execute("DELETE FROM refresh_tokens WHERE token = ?", (refresh_token,))
@@ -467,7 +468,7 @@ class AuthManager:
         return {"success": True}
 
     def get_profile(self, user_id: str) -> dict:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "SELECT name, email, phone, country_code, icon, addon, last_login_ts, last_login_ip, "
@@ -484,7 +485,7 @@ class AuthManager:
         allowed = ["name", "email", "phone", "country_code", "icon", "addon"]
         patch = {k: v for k, v in (fields or {}).items() if k in allowed and v is not None}
         self.get_profile(user_id)  # ensure row exists on read path
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("INSERT OR IGNORE INTO user_profile (user_id) VALUES (?)", (user_id,))
         for k, v in patch.items():
@@ -494,7 +495,7 @@ class AuthManager:
         return {"success": True, **patch}
 
     def touch_login(self, user_id: str, ip: str = "", device: str = "") -> None:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("INSERT OR IGNORE INTO user_profile (user_id) VALUES (?)", (user_id,))
         c.execute(
@@ -512,7 +513,7 @@ class AuthManager:
             return {"success": False, "error": "phone required"}
         code = f"{secrets.randbelow(1000000):06d}"
         now = int(time.time())
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("DELETE FROM sms_codes WHERE phone = ? AND used = 1", (phone,))
         c.execute(
@@ -524,7 +525,7 @@ class AuthManager:
         return {"success": True, "code": code, "expire_ts": now + ttl}
 
     def verify_sms_code(self, phone: str, code: str) -> bool:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute(
             "SELECT code, expires_ts, used FROM sms_codes WHERE phone = ? ORDER BY created_ts DESC LIMIT 1",
@@ -541,7 +542,7 @@ class AuthManager:
     # ==================== VALIDATION / QUOTA EXTEND ====================
 
     def user_exists(self, username: str) -> bool:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT 1 FROM users WHERE username = ?", (username,))
         row = c.fetchone()
@@ -550,7 +551,7 @@ class AuthManager:
 
     def extend_quota(self, user_id: str, disk_bytes: int = 0, disk_files: int = 0) -> dict:
         """v6 ``PubUser.ExtendQuota`` — top up the storage allowance."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = connect_db(self.db_path)
         c = conn.cursor()
         c.execute("SELECT bytes_quota FROM users WHERE user_id = ?", (user_id,))
         row = c.fetchone()

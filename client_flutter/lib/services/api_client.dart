@@ -71,9 +71,8 @@ class MyDriveApiClient {
   Future<Map<String, dynamic>> uploadFile(String filePath, String filename, {String parent = 'root'}) async {
     final form = FormData.fromMap({
       'file': await MultipartFile.fromFile(filePath, filename: filename),
-      'parent': parent,
     });
-    final resp = await _dio.post('/api/upload', data: form);
+    final resp = await _dio.post('/api/upload', queryParameters: {'parent': parent}, data: form);
     return Map<String, dynamic>.from(resp.data);
   }
 

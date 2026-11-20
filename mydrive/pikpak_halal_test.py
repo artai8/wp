@@ -401,6 +401,31 @@ def run_all():
        (proj_root / "client_flutter" / "lib" / "main.dart").exists() and
        (proj_root / "client_flutter" / "lib" / "pages" / "player_page.dart").exists())
 
+
+    print("== 11) v4.1 最终修复回归：封禁文件可删除、PG 适配层 SQL 翻译、MinIO 建桶与分布式维护锁 ==")
+    from db_adapter import translate_sql_to_pg, DualRow
+
+    # Blocked CID can still be deleted by owner (not 451!)
+    up_blk = client.post("/api/upload", headers=hdr_a, files={"file": ("blocked_del.txt", b"delete me even if blocked", "text/plain")})
+    blk_id = up_blk.json()["identity"]
+    blk_cid = up_blk.json()["content_identity"]
+    client.post(f"/api/admin/moderate/{blk_cid}", headers=hdr_a, json={"reason": "test_del"})
+    ok("封禁文件下载被拦截 (451)", client.get(f"/api/download/{blk_id}", headers=hdr_a).status_code == 451)
+    ok("封禁文件仍允许用户自行删除 (200)", client.delete(f"/api/files/{blk_id}", headers=hdr_a).status_code == 200)
+    client.delete(f"/api/admin/moderate/{blk_cid}", headers=hdr_a)
+
+    # DB adapter PostgreSQL translation & DualRow
+    pg_ddl = translate_sql_to_pg("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, raw BLOB)")
+    ok("SQLite DDL 自动转 PostgreSQL (BIGSERIAL/BYTEA)", "BIGSERIAL PRIMARY KEY" in pg_ddl and "BYTEA" in pg_ddl, pg_ddl)
+    pg_ins = translate_sql_to_pg("INSERT OR IGNORE INTO chunks (cid, note) VALUES (?, 'a?b')")
+    ok("SQLite 占位符与 IGNORE 转 PG 且保护字面量", "VALUES (%s, 'a?b')" in pg_ins and "ON CONFLICT DO NOTHING" in pg_ins, pg_ins)
+    dr = DualRow(["id", "name"], [42, "demo"])
+    ok("DualRow 兼容下标与列名访问", dr[0] == 42 and dr["name"] == "demo")
+
+    # Verify MinIO init & Flutter queryParameters
+    ok("集群编排含 minio-init 自动建桶", "minio-init:" in (proj_root / "deploy" / "docker-compose.cluster.yml").read_text(encoding="utf-8"))
+    ok("Flutter 上传 parent 走 queryParameters", "queryParameters: {'parent': parent}" in (proj_root / "client_flutter" / "lib" / "services" / "api_client.dart").read_text(encoding="utf-8"))
+
     print(f"\n结果: {passed} passed, 0 failed")
     shutil.rmtree(_TMP, ignore_errors=True)
 

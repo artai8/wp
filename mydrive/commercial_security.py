@@ -15,6 +15,7 @@ import collections
 import os
 import shutil
 import sqlite3
+from db_adapter import connect_db
 import threading
 import time
 from pathlib import Path
@@ -87,7 +88,7 @@ class AuditLogger:
     def __init__(self, storage_root: str):
         self.db_path = Path(storage_root) / "db" / "audit.sqlite"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(self.db_path)) as c:
+        with connect_db(self.db_path) as c:
             c.execute("""
                 CREATE TABLE IF NOT EXISTS audit_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,7 +105,7 @@ class AuditLogger:
 
     def log(self, action: str, user_id: str = "", target: str = "", ip: str = "", detail: str = ""):
         try:
-            with sqlite3.connect(str(self.db_path), timeout=3.0) as c:
+            with connect_db(self.db_path, timeout=3.0) as c:
                 c.execute(
                     "INSERT INTO audit_logs (ts, user_id, action, target, ip, detail) VALUES (?, ?, ?, ?, ?, ?)",
                     (int(time.time()), str(user_id or ""), action, str(target or ""), str(ip or ""), str(detail or "")[:500]),
@@ -113,7 +114,7 @@ class AuditLogger:
             pass
 
     def recent(self, limit: int = 100) -> List[dict]:
-        with sqlite3.connect(str(self.db_path), timeout=3.0) as c:
+        with connect_db(self.db_path, timeout=3.0) as c:
             c.row_factory = sqlite3.Row
             rows = c.execute(
                 "SELECT id, ts, user_id, action, target, ip, detail FROM audit_logs ORDER BY id DESC LIMIT ?",

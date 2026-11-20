@@ -17,6 +17,7 @@ import hmac
 import os
 import secrets
 import sqlite3
+from db_adapter import connect_db
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -73,7 +74,7 @@ class CommercialManager:
         enable_sqlite_wal(self.db_path)
 
     def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+        conn = connect_db(self.db_path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         return conn
 

@@ -348,10 +348,14 @@ async def upload_file(
     uid = caller_id(request)
     data = await file.read()
 
-    # Quota enforcement before spending any disk on new content
+    # Quota enforcement (synced with VIP/SVIP membership tier)
     quota = auth.get_quota(uid) if uid else {"quota": 0, "used": 0}
-    if uid and quota.get("quota") and quota["used"] + len(data) > quota["quota"]:
-        raise HTTPException(status_code=413, detail="Quota exceeded")
+    eff_quota = int(quota.get("quota") or 0)
+    cm = _commercial()
+    if uid and cm:
+        eff_quota = max(eff_quota, int(cm.get_membership(uid).get("storage_quota_bytes", 0)))
+    if uid and eff_quota and quota["used"] + len(data) > eff_quota:
+        raise HTTPException(status_code=413, detail="超出当前会员存储空间配额，请清理空间或升级 VIP")
 
     meta = engine.chunk_data(data, name=file.filename or "upload", parent=parent, user_id=uid or "anonymous")
     if uid:
@@ -822,9 +826,6 @@ async def delete_file(identity: str, request: Request, permanent: bool = Query(F
     meta = engine.get_file_meta(identity, user_id=uid)
     if not meta:
         raise HTTPException(status_code=404, detail="File not found")
-    cm = _commercial()
-    if cm and cm.is_cid_blocked(meta.content_identity):
-        raise HTTPException(status_code=451, detail="该文件因违规已被限制访问")
     engine.set_trashed(identity, trashed=not permanent, permanent=permanent, user_id=uid)
     if uid and permanent:
         auth.update_usage(uid, -meta.size)
