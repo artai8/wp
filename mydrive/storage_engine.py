@@ -37,6 +37,7 @@ from cid_engine import (
     compute_cid, compute_file_cid, parse_cid, quick_fingerprint,
     CidInfo, sha256, make_multihash, cid_v1_from_multihash
 )
+from tiered_storage import TieredStorageManager, smart_compress, smart_decompress
 from protocol import (
     new_identity, file_type_of, guess_mime, sort_name_of,
     encode_cursor, decode_cursor, DEFAULT_ORDER_BY, TYPE_DIRECTORY,
@@ -177,6 +178,27 @@ class StorageEngine:
         # Initialize database
         self.db_path = self.db_dir / "index.sqlite"
         self._init_db()
+        self.tiered = TieredStorageManager(storage_root, self.db_path, self.chunks_dir)
+        self._init_versions_table()
+
+    def _init_versions_table(self):
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS file_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_identity TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                content_identity TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                chunks_json TEXT NOT NULL,
+                create_ts INTEGER NOT NULL,
+                note TEXT DEFAULT ''
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_fid ON file_versions(file_identity, version)")
+        conn.commit()
+        conn.close()
 
     def _init_db(self):
         """Initialize SQLite database with all tables."""
@@ -645,9 +667,15 @@ class StorageEngine:
         """
         chunk_path = self._chunk_path(cid)
         if chunk_path.exists():
+            if hasattr(self, "tiered"):
+                self.tiered.touch(cid)
             return  # Already stored — this IS the dedup!
         chunk_path.parent.mkdir(parents=True, exist_ok=True)
-        chunk_path.write_bytes(encode_chunk(data, fmt))
+        encoded = encode_chunk(data, fmt)
+        compressed = False
+        if fmt == CHUNK_FMT_PLAIN and hasattr(self, "tiered") and self.tiered.compression_enabled:
+            encoded, compressed = smart_compress(encoded)
+        chunk_path.write_bytes(encoded)
 
         # Record in DB
         conn = sqlite3.connect(str(self.db_path))
@@ -664,6 +692,8 @@ class StorageEngine:
         finally:
             conn.close()
         self._fmt_cache[cid] = int(fmt)
+        if hasattr(self, "tiered"):
+            self.tiered.record_chunk_stored(cid, len(data), len(encoded), compressed)
 
     def _chunk_path(self, cid: str) -> Path:
         """Convert CID to a sharded path: chunks/ba/fk/<full_cid>"""
@@ -680,7 +710,21 @@ class StorageEngine:
         chunk_path = self._chunk_path(cid)
         if chunk_path.exists():
             raw = chunk_path.read_bytes()
-            return decode_chunk(raw, self.chunk_format(cid))
+            if hasattr(self, "tiered"):
+                self.tiered.touch(cid)
+            fmt = self.chunk_format(cid)
+            if fmt == CHUNK_FMT_PLAIN:
+                raw = smart_decompress(raw)
+            return decode_chunk(raw, fmt)
+
+        # Transparently hydrate from cold tier (S3 / R2 / MinIO / NAS) on demand
+        if hasattr(self, "tiered") and self.tiered.backend is not None:
+            raw = self.tiered.hydrate_from_cold(cid)
+            if raw is not None:
+                fmt = self.chunk_format(cid)
+                if fmt == CHUNK_FMT_PLAIN:
+                    raw = smart_decompress(raw)
+                return decode_chunk(raw, fmt)
 
         # Try inline data in DB
         conn = sqlite3.connect(str(self.db_path))
@@ -701,7 +745,13 @@ class StorageEngine:
         """
         chunk_path = self._chunk_path(cid)
         if chunk_path.exists():
+            if hasattr(self, "tiered"):
+                self.tiered.touch(cid)
             return chunk_path.read_bytes()
+        if hasattr(self, "tiered") and self.tiered.backend is not None:
+            raw = self.tiered.hydrate_from_cold(cid)
+            if raw is not None:
+                return raw
         conn = sqlite3.connect(str(self.db_path))
         c = conn.cursor()
         c.execute("SELECT inline_data FROM chunks WHERE cid = ?", (cid,))
@@ -1316,6 +1366,228 @@ class StorageEngine:
             "dedup_ratio": (1 - disk_used / file_total) if file_total > 0 else 0,
             "fast_lookup_entries": int(lookup_count or 0),
         }
+
+
+
+    # ==================== PIKPAK / HALALCLOUD ENHANCEMENTS ====================
+
+    def list_by_category(self, category: str, user_id: str = None, limit: int = 200) -> List[FileMeta]:
+        """Smart category views: video, image, audio, doc, archive, starred."""
+        cat = (category or "").lower()
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        params: list = []
+        where = "deleted = 0 AND trashed = 0 AND is_dir = 0"
+        if user_id is not None:
+            where += " AND user_id = ?"
+            params.append(user_id)
+
+        if cat == "starred":
+            where = "deleted = 0 AND trashed = 0 AND starred = 1"
+            if user_id is not None:
+                where += " AND user_id = ?"
+        elif cat == "video":
+            where += " AND (mime_type LIKE 'video/%' OR type = 40)"
+        elif cat == "image":
+            where += " AND (mime_type LIKE 'image/%' OR type = 50)"
+        elif cat == "audio":
+            where += " AND (mime_type LIKE 'audio/%' OR type = 60)"
+        elif cat == "doc":
+            where += (
+                " AND (mime_type LIKE 'text/%' OR mime_type LIKE '%pdf%' "
+                "OR mime_type LIKE '%word%' OR mime_type LIKE '%sheet%' "
+                "OR mime_type LIKE '%presentation%' OR mime_type LIKE '%document%' "
+                "OR type = 30)"
+            )
+        elif cat == "archive":
+            where += (
+                " AND (mime_type LIKE '%zip%' OR mime_type LIKE '%rar%' "
+                "OR mime_type LIKE '%tar%' OR mime_type LIKE '%7z%' "
+                "OR mime_type LIKE '%gzip%' OR type = 70)"
+            )
+
+        c.execute(f"SELECT identity FROM files WHERE {where} ORDER BY update_ts DESC LIMIT ?", params + [int(limit)])
+        ids = [r[0] for r in c.fetchall()]
+        conn.close()
+        out = []
+        for fid in ids:
+            m = self.get_file_meta(fid, user_id=user_id)
+            if m:
+                out.append(m)
+        return out
+
+    def toggle_star(self, identity: str, starred: Optional[bool] = None, user_id: str = None) -> Optional[FileMeta]:
+        """Star or unstar a file/folder."""
+        meta = self.get_file_meta(identity, user_id=user_id)
+        if not meta:
+            return None
+        new_val = (not meta.starred) if starred is None else bool(starred)
+        meta.starred = new_val
+        meta.update_ts = now_ms()
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        c.execute("UPDATE files SET starred = ?, update_ts = ? WHERE identity = ?", (1 if new_val else 0, meta.update_ts, identity))
+        conn.commit()
+        conn.close()
+        self._save_meta(meta)
+        return meta
+
+    def save_version_snapshot(self, identity: str, note: str = "", user_id: str = None) -> Optional[dict]:
+        """Record a snapshot of a file's current CID & chunk list for version history."""
+        meta = self.get_file_meta(identity, user_id=user_id)
+        if not meta or meta.is_dir:
+            return None
+        chunks_json = json.dumps([asdict(ch) for ch in meta.chunks])
+        ts = now_ms()
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO file_versions (file_identity, version, content_identity, size, chunks_json, create_ts, note) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (meta.identity, meta.version, meta.content_identity, meta.size, chunks_json, ts, note),
+        )
+        vid = c.lastrowid
+        conn.commit()
+        conn.close()
+        return {"id": vid, "file_identity": meta.identity, "version": meta.version,
+                "content_identity": meta.content_identity, "size": meta.size, "create_ts": ts, "note": note}
+
+    def list_versions(self, identity: str, user_id: str = None) -> List[dict]:
+        meta = self.get_file_meta(identity, user_id=user_id)
+        if not meta:
+            return []
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, version, content_identity, size, create_ts, note FROM file_versions "
+            "WHERE file_identity = ? ORDER BY version DESC, id DESC",
+            (identity,),
+        )
+        rows = [
+            {"id": r[0], "version": r[1], "content_identity": r[2], "size": r[3], "create_ts": r[4], "note": r[5]}
+            for r in c.fetchall()
+        ]
+        conn.close()
+        return rows
+
+    def restore_version(self, identity: str, version_id: int, user_id: str = None) -> Optional[FileMeta]:
+        """Roll back a file to a previous version snapshot (saving current state first)."""
+        meta = self.get_file_meta(identity, user_id=user_id)
+        if not meta or meta.is_dir:
+            return None
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        c.execute(
+            "SELECT version, content_identity, size, chunks_json FROM file_versions "
+            "WHERE id = ? AND file_identity = ?",
+            (int(version_id), identity),
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return None
+        # Snapshot current state before restoring
+        self.save_version_snapshot(identity, note=f"回滚前自动备份 v{meta.version}", user_id=user_id)
+        chunks_data = json.loads(row[3])
+        meta.content_identity = row[1]
+        meta.size = int(row[2])
+        meta.chunks = [ChunkInfo(**ch) for ch in chunks_data]
+        meta.version += 1
+        meta.update_ts = now_ms()
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        c.execute(
+            "UPDATE files SET content_identity = ?, size = ?, version = ?, update_ts = ? WHERE identity = ?",
+            (meta.content_identity, meta.size, meta.version, meta.update_ts, identity),
+        )
+        c.execute("DELETE FROM file_chunks WHERE file_identity = ?", (identity,))
+        for ch in meta.chunks:
+            c.execute(
+                "INSERT INTO file_chunks (file_identity, chunk_index, cid, start_byte, end_byte, size) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (identity, ch.index, ch.cid, ch.start, ch.end, ch.size),
+            )
+        conn.commit()
+        conn.close()
+        self._save_meta(meta)
+        return meta
+
+    def empty_trash(self, user_id: str = None) -> dict:
+        """Permanently delete all trashed files for a user and run chunk GC."""
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        if user_id is not None:
+            c.execute("SELECT identity FROM files WHERE trashed = 1 AND deleted = 0 AND user_id = ?", (user_id,))
+        else:
+            c.execute("SELECT identity FROM files WHERE trashed = 1 AND deleted = 0")
+        ids = [r[0] for r in c.fetchall()]
+        conn.close()
+        for fid in ids:
+            self.delete_file(fid, permanent=True, user_id=user_id)
+        gc = self.gc_chunks()
+        return {"deleted_files": len(ids), **gc}
+
+    def purge_expired_trash(self, retention_days: Optional[int] = None) -> dict:
+        """Automatically clean up trashed files older than retention_days."""
+        if retention_days is None:
+            retention_days = int(self.tiered.config.get("trash_retention_days", 30)) if hasattr(self, "tiered") else 30
+        if retention_days <= 0:
+            return {"deleted_files": 0, "reclaimed_chunks": 0, "reclaimed_bytes": 0}
+        cutoff_ms = now_ms() - retention_days * 86400 * 1000
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        c.execute(
+            "SELECT identity FROM files WHERE trashed = 1 AND deleted = 0 "
+            "AND ((delete_ts > 0 AND delete_ts < ?) OR (delete_ts = 0 AND update_ts < ?))",
+            (cutoff_ms, cutoff_ms),
+        )
+        ids = [r[0] for r in c.fetchall()]
+        conn.close()
+        for fid in ids:
+            self.delete_file(fid, permanent=True)
+        gc = self.gc_chunks() if ids else {"reclaimed_chunks": 0, "reclaimed_bytes": 0}
+        return {"deleted_files": len(ids), **gc}
+
+    def gc_chunks(self) -> dict:
+        """Garbage-collect unreferenced chunks from local disk and cold storage."""
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        # Collect all CIDs still referenced by live files
+        c.execute(
+            "SELECT DISTINCT fc.cid FROM file_chunks fc "
+            "JOIN files f ON f.identity = fc.file_identity WHERE f.deleted = 0"
+        )
+        live_cids = {r[0] for r in c.fetchall()}
+        # Also keep CIDs referenced by version snapshots of live files
+        c.execute(
+            "SELECT fv.chunks_json FROM file_versions fv "
+            "JOIN files f ON f.identity = fv.file_identity WHERE f.deleted = 0"
+        )
+        for (cj,) in c.fetchall():
+            try:
+                for ch in json.loads(cj):
+                    if ch.get("cid"):
+                        live_cids.add(ch["cid"])
+            except Exception:
+                pass
+        c.execute("SELECT cid FROM chunks")
+        all_cids = [r[0] for r in c.fetchall()]
+        orphan_cids = [cid for cid in all_cids if cid not in live_cids]
+
+        reclaimed_bytes = 0
+        for cid in orphan_cids:
+            if hasattr(self, "tiered"):
+                reclaimed_bytes += self.tiered.delete_chunk_everywhere(cid)
+            else:
+                p = self._chunk_path(cid)
+                if p.exists():
+                    reclaimed_bytes += p.stat().st_size
+                    p.unlink(missing_ok=True)
+            c.execute("DELETE FROM chunks WHERE cid = ?", (cid,))
+            self._fmt_cache.pop(cid, None)
+        conn.commit()
+        conn.close()
+        return {"reclaimed_chunks": len(orphan_cids), "reclaimed_bytes": reclaimed_bytes}
 
 
 if __name__ == "__main__":

@@ -152,6 +152,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
         全部文件
       </div>
+      <div class="nav-item" data-page="cat:starred" onclick="navigate('cat:starred')">⭐ 收藏夹</div>
+      <div class="nav-item" data-page="cat:video" onclick="navigate('cat:video')">🎬 视频</div>
+      <div class="nav-item" data-page="cat:image" onclick="navigate('cat:image')">🖼️ 图片相册</div>
+      <div class="nav-item" data-page="cat:audio" onclick="navigate('cat:audio')">🎵 音频</div>
+      <div class="nav-item" data-page="cat:doc" onclick="navigate('cat:doc')">📄 文档</div>
+      <div class="nav-item" data-page="tiered" onclick="navigate('tiered')">☁️ 分级存储</div>
+      <div class="nav-item" data-page="telegram" onclick="navigate('telegram')">🤖 TG 机器人</div>
+      <div class="nav-item" data-page="vip" onclick="navigate('vip')">👑 会员与配额</div>
       <div class="nav-item" data-page="shares" onclick="navigate('shares')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
         分享管理
@@ -1649,5 +1657,6 @@ async function p2pDownload(identity) {
   }
 })();
 </script>
+<script src="/static/enhancements.js"></script>
 </body>
 </html>

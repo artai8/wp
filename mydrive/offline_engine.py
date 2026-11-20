@@ -318,6 +318,30 @@ class Aria2:
             except Aria2Error:
                 continue
 
+    def pause(self, gid: str) -> bool:
+        try:
+            self._rpc("aria2.pause", [gid], timeout=5)
+            return True
+        except Aria2Error:
+            return False
+
+    def unpause(self, gid: str) -> bool:
+        try:
+            self._rpc("aria2.unpause", [gid], timeout=5)
+            return True
+        except Aria2Error:
+            return False
+
+    def set_global_speed_limit(self, max_download: str = "0", max_upload: str = "0") -> bool:
+        try:
+            self._rpc("aria2.changeGlobalOption", [{
+                "max-overall-download-limit": str(max_download or "0"),
+                "max-overall-upload-limit": str(max_upload or "0"),
+            }], timeout=5)
+            return True
+        except Aria2Error:
+            return False
+
     def find_by_infohash(self, info_hash: str) -> Optional[str]:
         """Return the GID aria2 already holds for this BT infohash, if any."""
         if not info_hash:
@@ -690,19 +714,30 @@ class OfflineEngine:
                     pass
         tident = f"{infohash}_otp_btv1" if infohash else ""
 
-        # 秒传：同一 task_identity 已入库 -> 直接完成
-        if tident:
+        url_key = tident or ("url_" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:24])
+        # 全局跨用户磁力/URL秒存（PikPak 核心机制）：只要任意用户已离线入库，零流量零额外磁盘秒存
+        if url_key and not req.get("flag"):
             with self._conn() as c:
                 row = c.execute(
-                    "SELECT * FROM offline_tasks WHERE user_id=? AND task_identity=? AND stored=1 "
-                    "ORDER BY update_ts DESC LIMIT 1", (user_id, tident)).fetchone()
-            if row and not req.get("flag"):
+                    "SELECT * FROM offline_tasks WHERE (task_identity=? OR task_identity=?) AND stored=1 "
+                    "ORDER BY update_ts DESC LIMIT 1", (tident or url_key, url_key)).fetchone()
+            if row:
+                cloned_path = self._clone_instant_files(row, save_path, user_id)
                 task = self._row_to_task(row)
-                task.update({"identity": self._identity(), "status": ST_DONE,
-                             "progress": 100, "create_ts": self._now(),
-                             "update_ts": self._now()})
-                task["save_path"] = save_path
+                task.update({
+                    "identity": self._identity(),
+                    "status": ST_DONE,
+                    "progress": 100,
+                    "create_ts": self._now(),
+                    "update_ts": self._now(),
+                    "save_path": save_path,
+                    "file": cloned_path or task.get("file", ""),
+                    "instant_saved": True,
+                })
                 self._insert(task, user_id, "")
+                with self._conn() as c:
+                    c.execute("UPDATE offline_tasks SET stored=1, files_json=? WHERE identity=?",
+                              (row["files_json"] or "[]", task["identity"]))
                 return task
 
         meta = self._meta_cache_get(infohash) if infohash else None
@@ -737,8 +772,11 @@ class OfflineEngine:
                     "follow-torrent": "true", "seed-time": "0",
                     "allow-overwrite": "true", "auto-file-renaming": "false",
                     "continue": "true"}
+            selected_files = req.get("selected_files") or []
             if infohash:
                 opts["bt-remove-unselected-file"] = "false"
+                if selected_files:
+                    opts["select-file"] = ",".join(str(int(i)) for i in selected_files)
                 # 线上把重复 Add 当秒传；aria2 则会拒绝同一 infohash，先清残留
                 self.aria2.drop_infohash(infohash)
             else:
@@ -932,6 +970,7 @@ class OfflineEngine:
         else:
             dir_identity, dir_path = self._dir_for_task(dict(row))
         count = 0
+        ingested_ids = []
         for path in abs_paths:
             p = Path(path)
             if not p.exists() or not p.is_file():
@@ -954,8 +993,9 @@ class OfflineEngine:
                         self.storage.create_dir(part, parent=parent, user_id=user_id).identity
             try:
                 # 离线资源按线上对象存储的私有格式落盘（整块 XOR 0x75）
-                self.storage.chunk_file(str(p), parent=parent, name=p.name,
-                                        user_id=user_id, chunk_format=1)
+                m = self.storage.chunk_file(str(p), parent=parent, name=p.name,
+                                            user_id=user_id, chunk_format=1)
+                ingested_ids.append({"identity": m.identity, "name": m.name, "rel": rel})
                 count += 1
             except Exception:
                 continue
@@ -964,8 +1004,119 @@ class OfflineEngine:
             stored_path = (dir_path.rstrip("/") + "/" + Path(abs_paths[0]).name) if dir_path != "/" \
                 else "/" + Path(abs_paths[0]).name
         with self._conn() as c:
-            c.execute("UPDATE offline_tasks SET stored=1, file=?, message=? WHERE identity=?",
-                      (stored_path, "" if count else "no files ingested", identity))
+            c.execute("UPDATE offline_tasks SET stored=1, file=?, message=?, files_json=? WHERE identity=?",
+                      (stored_path, "" if count else "no files ingested",
+                       json.dumps(ingested_ids, ensure_ascii=False), identity))
+        # 入库完成后自动清理离线临时下载目录，避免本地磁盘双倍占用
+        if count > 0 and os.environ.get("OFFLINE_AUTO_CLEANUP", "1").lower() not in ("0", "false", "no"):
+            for path in abs_paths:
+                try:
+                    p = Path(path)
+                    if p.exists() and p.is_file():
+                        p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            try:
+                base_dir = self.download_root / (row["name"] or "")
+                if base_dir.exists() and base_dir.is_dir():
+                    shutil.rmtree(base_dir, ignore_errors=True)
+            except OSError:
+                pass
+
+
+    def _clone_instant_files(self, src_row, save_path: str, target_user_id: str) -> str:
+        """Zero-copy clone of previously ingested offline files into target_user_id's drive."""
+        try:
+            items = json.loads(src_row["files_json"] or "[]")
+        except Exception:
+            items = []
+        if not items:
+            return src_row["file"] or ""
+        parent_id, parent_path = self._resolve_dir(save_path or "/", target_user_id)
+        cloned_first = ""
+        for item in items:
+            fid = item.get("identity") if isinstance(item, dict) else None
+            if not fid:
+                continue
+            src_meta = self.storage.get_file_meta(fid)
+            if not src_meta or src_meta.is_dir:
+                continue
+            cloned = self.storage.clone_file(src_meta, name=src_meta.name, parent=parent_id, user_id=target_user_id)
+            if not cloned_first:
+                cloned_first = cloned.path
+        return cloned_first or parent_path
+
+    def register_instant_cache(self, url: str, file_identity: str, user_id: str, name: str = "") -> dict:
+        """Seed global instant-save cache for an infohash/URL pointing to an existing stored file."""
+        meta = self.storage.get_file_meta(file_identity, user_id=user_id)
+        if not meta:
+            raise ValueError("Source file not found")
+        infohash = infohash_from_magnet(url) if url.startswith("magnet:") else ""
+        tident = f"{infohash}_otp_btv1" if infohash else ("url_" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:24])
+        now = self._now()
+        task = {
+            "identity": self._identity(),
+            "type": TYPE_BT if infohash else TYPE_HTTP,
+            "status": ST_DONE,
+            "update_ts": now,
+            "create_ts": now,
+            "url": url,
+            "size": meta.size,
+            "name": name or meta.name,
+            "task_identity": tident,
+            "code": 0,
+            "message": "",
+            "progress": 100,
+            "bytes_total": meta.size,
+            "bytes_processed": meta.size,
+            "save_path": "/",
+            "file": meta.path,
+        }
+        self._insert(task, user_id, "")
+        files_json = json.dumps([{"identity": meta.identity, "name": meta.name, "rel": meta.name}], ensure_ascii=False)
+        with self._conn() as c:
+            c.execute("UPDATE offline_tasks SET stored=1, files_json=? WHERE identity=?", (files_json, task["identity"]))
+        return task
+
+    def pause(self, task_id: str, user_id: str) -> bool:
+        with self._conn() as c:
+            row = c.execute("SELECT gid FROM offline_tasks WHERE identity=? AND user_id=?", (task_id, user_id)).fetchone()
+        if not row:
+            return False
+        if row["gid"]:
+            self.aria2.pause(row["gid"])
+        with self._conn() as c:
+            c.execute("UPDATE offline_tasks SET status=?, message='paused', update_ts=? WHERE identity=?",
+                      (ST_WAITING, self._now(), task_id))
+        return True
+
+    def resume(self, task_id: str, user_id: str) -> bool:
+        with self._conn() as c:
+            row = c.execute("SELECT gid FROM offline_tasks WHERE identity=? AND user_id=?", (task_id, user_id)).fetchone()
+        if not row:
+            return False
+        if row["gid"]:
+            self.aria2.unpause(row["gid"])
+        with self._conn() as c:
+            c.execute("UPDATE offline_tasks SET message='', update_ts=? WHERE identity=?", (self._now(), task_id))
+        return True
+
+    def set_speed_limit(self, max_download: str = "0", max_upload: str = "0") -> dict:
+        ok = self.aria2.set_global_speed_limit(max_download, max_upload)
+        return {"applied": ok, "max_download": max_download, "max_upload": max_upload}
+
+    def add_batch(self, urls: List[str], save_path: str, user_id: str) -> List[dict]:
+        results = []
+        for u in urls:
+            u = (u or "").strip()
+            if not u:
+                continue
+            try:
+                t = self.add({"url": u, "save_path": save_path}, user_id)
+                results.append({"ok": True, "task": t})
+            except Exception as e:
+                results.append({"ok": False, "url": u, "error": str(e)})
+        return results
 
     # -- 统计 --
     def stats(self, user_id: str) -> dict:

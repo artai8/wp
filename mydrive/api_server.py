@@ -35,7 +35,10 @@ from auth_manager import AuthManager
 from sync_manager import SyncManager
 from offline_downloader import OfflineDownloader
 from offline_engine import Aria2, OfflineEngine
-from sftp_server import SftpService
+try:
+    from sftp_server import SftpService
+except ImportError:
+    SftpService = None
 from slices_server import (build_slices_app, default_cache as edge_cache,
                            prewarm as prewarm_cdn, serve_block,
                            start_slices_server)
@@ -44,6 +47,7 @@ from p2p_signaling import P2PSignalingServer
 from grpc_compat import GrpcCompatRouter
 from fastapi.websockets import WebSocket
 import protocol as proto
+from extra_routes import mount_extra_routes
 
 # Initialize
 STORAGE_ROOT = os.environ.get("STORAGE_ROOT", "./storage_data")
@@ -85,7 +89,7 @@ webdav = WebDAVGateway(
 PRESIGN_SECRET = os.environ.get("MYDRIVE_PRESIGN_SECRET") or auth.secret_key
 # ---- 独立 SFTP 端口（对齐 sftp://<host>:2022） ----
 sftp_service = None
-if os.environ.get("SFTP_ENABLE", "1").lower() not in ("0", "false", "no"):
+if SftpService is not None and os.environ.get("SFTP_ENABLE", "1").lower() not in ("0", "false", "no"):
     sftp_service = SftpService(
         engine, auth,
         cfg_path=os.path.join(STORAGE_ROOT, "json", "sftp.json"),
@@ -1124,6 +1128,7 @@ class OfflineAddRequest(BaseModel):
     name: str = ""
     parent: str = "/"
     save_path: str = ""
+    selected_files: Optional[List[int]] = None
 
 
 @app.get("/api/endpoints")
@@ -1150,12 +1155,13 @@ async def add_offline_download(req: OfflineAddRequest, request: Request):
         "url": req.url,
         "name": req.name or "",
         "save_path": req.save_path or req.parent or "/",
+        "selected_files": req.selected_files or [],
     }
     try:
         task = offline_engine.add(payload, uid)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"success": True, **_offline_task_json(task)}
+    return {"success": True, "instant_saved": bool(task.get("instant_saved")), **_offline_task_json(task)}
 
 
 @app.get("/api/offline/list")
@@ -1268,6 +1274,19 @@ async def p2p_websocket(ws: WebSocket):
             return
     await p2p_server.handle_websocket(ws)
 
+
+# ==================== EXTRA ROUTES (PIKPAK / HALALCLOUD FULL FEATURES) ====================
+extra_services = mount_extra_routes(
+    app=app,
+    engine=engine,
+    auth=auth,
+    share=share,
+    offline_engine=offline_engine,
+    storage_root=STORAGE_ROOT,
+    caller_id_fn=caller_id,
+    meta_to_info_fn=meta_to_info,
+    offline_task_json_fn=_offline_task_json,
+)
 
 # ==================== WEB UI ====================
 

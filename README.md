@@ -288,3 +288,33 @@ python verify_upload_shape.py   # 上传链路形态校验
 ## License
 
 MIT
+
+
+---
+
+## 新增增强功能（对标清真云 & PikPak）
+
+### 1. 有限空间存大文件：冷热分级存储 + 压缩 + 垃圾回收 (`tiered_storage.py`)
+- **热缓存 + 冷对象存储分层**：本地磁盘仅作为有上限的 LRU 热缓存（`LOCAL_CACHE_MAX_BYTES`），超出阈值自动将冷分块迁移到 **S3 兼容对象存储**（内置零依赖 AWS SigV4 客户端，支持 MinIO / Cloudflare R2 / Backblaze B2 / 阿里云 OSS / AWS S3）或 **外部挂载目录 / NAS / Rclone 目录**，并释放本地副本。
+- **按需拉取（4 MiB 粒度）**：读取或云播大文件时，仅按需从冷存储拉取当前播放/下载的分块，几十 GB 视频无需整文件落盘。
+- **智能分块压缩**：可选开启 `CHUNK_COMPRESSION=1`，对文档/日志/源码自动 zlib 压缩，压缩率不足 8% 的视频/压缩包自动跳过。
+- **引用计数垃圾回收与回收站清理**：支持 `POST /api/storage/gc`、一键清空回收站 `POST /api/trash/empty` 及过期回收站清理 `POST /api/trash/purge-expired`。
+
+### 2. 云播与媒体体验 (`media_service.py`)
+- **FFmpeg 按需 HLS 转码/封装**：支持 `原画直连 / HLS 原画(Remux) / 1080P / 720P / 480P` 切换，兼容 MKV/HEVC/AVI 等浏览器非原生格式。
+- **字幕自动挂载与转换**：自动扫描同目录 `.srt` / `.ass` / `.vtt` 字幕并实时转为 WebVTT。
+- **封面缩略图、逐帧雪碧图预览与续播记忆**：持久化保存播放进度、倍速（0.5x–2.0x）与画质偏好。
+
+### 3. 离线下载增强与 Telegram 机器人 (`offline_engine.py`, `telegram_bot.py`)
+- **跨用户全局磁力/URL 零拷贝秒存**：任意用户已离线入库的 `infohash` 或链接，其他用户提交时毫秒级克隆元数据入库，零流量零额外磁盘。
+- **种子解析选文件、批量离线、暂停/恢复与全局限速**。
+- **类 PikPak Telegram 机器人**：支持 Webhook (`/api/telegram/webhook`) 与 Web 内置模拟器 (`/api/telegram/simulate`)，绑定账号后转发磁力/链接自动离线。
+
+### 4. Web 端文件管理与公开分享闭环 (`extra_routes.py`, `static/enhancements.js`)
+- 智能分类（收藏夹 / 视频 / 图片相册 / 音频 / 文档）、跨目录全局搜索、真实复制、文件版本快照与回滚、悬浮批量操作栏（含打包 ZIP 下载）以及独立公开分享提取码与一键转存页 `/s/{share_id}`。
+
+### 新增端到端测试
+```bash
+cd mydrive
+python3 pikpak_halal_test.py   # 35 项全功能自动化验收测试
+```

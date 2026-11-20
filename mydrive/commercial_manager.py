@@ -1,0 +1,209 @@
+"""
+Commercial Membership, Quota, Redemption Code & Moderation Manager
+==================================================================
+Brings PikPak / HalalCloud commercial operations to MyDrive:
+- Tiered plans: `free`, `vip`, `svip` with storage quota, daily offline quota,
+  download speed cap, and feature gates.
+- Redemption codes (兑换码): generate & redeem codes to upgrade accounts.
+- Content moderation (CID blocklist): block/unblock violating CIDs across shares
+  and downloads with audit reason.
+- SQLite WAL helper to enable high-concurrency reads/writes across all DBs.
+"""
+
+from __future__ import annotations
+
+import secrets
+import sqlite3
+import time
+from pathlib import Path
+from typing import Dict, List, Optional
+
+PLANS: Dict[str, dict] = {
+    "free": {
+        "name": "免费版",
+        "storage_quota_bytes": 10 * 1024 * 1024 * 1024,       # 10 GB
+        "daily_offline_quota": 5,
+        "download_speed_bps": 2 * 1024 * 1024,                # 2 MB/s
+        "hls_transcode": True,
+        "max_quality": "720p",
+    },
+    "vip": {
+        "name": "VIP 会员",
+        "storage_quota_bytes": 1024 * 1024 * 1024 * 1024,     # 1 TB
+        "daily_offline_quota": 100,
+        "download_speed_bps": 0,                              # unlimited
+        "hls_transcode": True,
+        "max_quality": "1080p",
+    },
+    "svip": {
+        "name": "SVIP 超级会员",
+        "storage_quota_bytes": 10 * 1024 * 1024 * 1024 * 1024,  # 10 TB
+        "daily_offline_quota": 10000,
+        "download_speed_bps": 0,                                # unlimited
+        "hls_transcode": True,
+        "max_quality": "original",
+    },
+}
+
+
+def enable_sqlite_wal(db_path: Path):
+    """Enable WAL mode & busy timeout for better multi-user concurrency."""
+    if not db_path.exists():
+        return
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.close()
+    except Exception:
+        pass
+
+
+class CommercialManager:
+    """Manages VIP tiers, redemption codes, and CID content moderation."""
+
+    def __init__(self, storage_root: str):
+        self.db_path = Path(storage_root) / "db" / "commercial.sqlite"
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+        enable_sqlite_wal(self.db_path)
+
+    def _conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self):
+        with self._conn() as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS user_memberships (
+                    user_id TEXT PRIMARY KEY,
+                    plan TEXT NOT NULL DEFAULT 'free',
+                    expire_ts INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS redeem_codes (
+                    code TEXT PRIMARY KEY,
+                    plan TEXT NOT NULL,
+                    duration_days INTEGER NOT NULL,
+                    used_by TEXT DEFAULT '',
+                    used_at INTEGER DEFAULT 0,
+                    created_at INTEGER NOT NULL
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS blocked_cids (
+                    cid TEXT PRIMARY KEY,
+                    reason TEXT DEFAULT '',
+                    blocked_at INTEGER NOT NULL
+                )
+            """)
+
+    def get_membership(self, user_id: str) -> dict:
+        now = int(time.time())
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT plan, expire_ts FROM user_memberships WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        plan_key = "free"
+        expire_ts = 0
+        if row:
+            if row["plan"] in PLANS and (row["expire_ts"] == 0 or row["expire_ts"] > now):
+                plan_key = row["plan"]
+                expire_ts = int(row["expire_ts"])
+        spec = PLANS[plan_key]
+        return {
+            "user_id": user_id,
+            "plan": plan_key,
+            "plan_name": spec["name"],
+            "expire_ts": expire_ts,
+            "storage_quota_bytes": spec["storage_quota_bytes"],
+            "daily_offline_quota": spec["daily_offline_quota"],
+            "download_speed_bps": spec["download_speed_bps"],
+            "max_quality": spec["max_quality"],
+            "available_plans": PLANS,
+        }
+
+    def set_membership(self, user_id: str, plan: str, duration_days: int = 30) -> dict:
+        if plan not in PLANS:
+            raise ValueError(f"Unknown plan: {plan}")
+        now = int(time.time())
+        cur = self.get_membership(user_id)
+        base_ts = max(now, cur["expire_ts"]) if cur["plan"] == plan else now
+        expire_ts = 0 if plan == "free" else (base_ts + max(1, int(duration_days)) * 86400)
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO user_memberships (user_id, plan, expire_ts, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET plan=excluded.plan, expire_ts=excluded.expire_ts, updated_at=excluded.updated_at",
+                (user_id, plan, expire_ts, now),
+            )
+        return self.get_membership(user_id)
+
+    def generate_codes(self, plan: str = "vip", duration_days: int = 30, count: int = 1) -> List[dict]:
+        if plan not in ("vip", "svip"):
+            raise ValueError("Plan must be vip or svip")
+        count = max(1, min(50, int(count)))
+        now = int(time.time())
+        out = []
+        with self._conn() as c:
+            for _ in range(count):
+                code = f"{plan.upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+                c.execute(
+                    "INSERT INTO redeem_codes (code, plan, duration_days, created_at) VALUES (?, ?, ?, ?)",
+                    (code, plan, int(duration_days), now),
+                )
+                out.append({"code": code, "plan": plan, "duration_days": int(duration_days)})
+        return out
+
+    def redeem_code(self, user_id: str, code: str) -> dict:
+        code = (code or "").strip().upper()
+        if not code:
+            raise ValueError("兑换码不能为空")
+        now = int(time.time())
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT code, plan, duration_days, used_by FROM redeem_codes WHERE code = ?",
+                (code,),
+            ).fetchone()
+            if not row:
+                raise ValueError("无效的兑换码")
+            if row["used_by"]:
+                raise ValueError("该兑换码已被使用")
+            c.execute(
+                "UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE code = ?",
+                (user_id, now, code),
+            )
+        return self.set_membership(user_id, row["plan"], int(row["duration_days"]))
+
+    # ==================== CONTENT MODERATION ====================
+
+    def block_cid(self, cid: str, reason: str = "violation") -> dict:
+        now = int(time.time())
+        with self._conn() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO blocked_cids (cid, reason, blocked_at) VALUES (?, ?, ?)",
+                (cid, reason, now),
+            )
+        return {"cid": cid, "blocked": True, "reason": reason, "blocked_at": now}
+
+    def unblock_cid(self, cid: str) -> dict:
+        with self._conn() as c:
+            c.execute("DELETE FROM blocked_cids WHERE cid = ?", (cid,))
+        return {"cid": cid, "blocked": False}
+
+    def is_cid_blocked(self, cid: str) -> bool:
+        if not cid:
+            return False
+        with self._conn() as c:
+            row = c.execute("SELECT 1 FROM blocked_cids WHERE cid = ?", (cid,)).fetchone()
+        return row is not None
+
+    def list_blocked_cids(self) -> List[dict]:
+        with self._conn() as c:
+            rows = c.execute("SELECT cid, reason, blocked_at FROM blocked_cids ORDER BY blocked_at DESC").fetchall()
+        return [dict(r) for r in rows]
