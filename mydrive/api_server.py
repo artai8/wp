@@ -47,6 +47,7 @@ from grpc_compat import GrpcCompatRouter
 from fastapi.websockets import WebSocket
 import protocol as proto
 from extra_routes import mount_extra_routes
+from commercial_security import throttled_chunk_iter
 
 # Initialize
 STORAGE_ROOT = os.environ.get("STORAGE_ROOT", "./storage_data")
@@ -445,13 +446,25 @@ async def download_file(identity: str, request: Request):
     meta = engine.get_file_meta(identity, user_id=caller_id(request))
     if not meta:
         raise HTTPException(status_code=404, detail="File not found")
+    cm = _commercial()
+    if cm and cm.is_cid_blocked(meta.content_identity):
+        raise HTTPException(status_code=451, detail="该文件因违规已被限制访问")
 
-    def stream():
+    speed_bps = 0
+    if cm:
+        uid_dl = caller_id(request)
+        if uid_dl:
+            speed_bps = int(cm.get_membership(uid_dl).get("download_speed_bps", 0))
+
+    def _raw_chunks():
         for chunk in meta.chunks:
             data = engine.get_chunk(chunk.cid)
             if data is None:
                 break
             yield data
+
+    def stream():
+        yield from throttled_chunk_iter(_raw_chunks(), speed_bps)
 
     headers = {
         "Content-Disposition": f'attachment; filename="{meta.name}"',
@@ -980,6 +993,9 @@ async def download_shared(share_id: str, password: str = ""):
     meta = engine.get_file_meta(result["file_identity"])
     if not meta:
         raise HTTPException(status_code=404, detail="File not found")
+    cm = _commercial()
+    if cm and cm.is_cid_blocked(meta.content_identity):
+        raise HTTPException(status_code=451, detail="该分享文件因违规已被限制访问")
     def stream():
         for _, _, data in engine.stream_chunks(meta.identity):
             yield data

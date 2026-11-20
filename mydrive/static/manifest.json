@@ -1,0 +1,10 @@
+{
+  "name": "MyDrive 云盘商业版",
+  "short_name": "MyDrive",
+  "description": "IPFS 内容寻址 + 分级冷热存储 + 云播 + 磁力秒存云盘",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f5f7",
+  "theme_color": "#0071e3",
+  "icons": []
+}

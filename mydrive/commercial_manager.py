@@ -12,6 +12,9 @@ Brings PikPak / HalalCloud commercial operations to MyDrive:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import os
 import secrets
 import sqlite3
 import time
@@ -99,6 +102,20 @@ class CommercialManager:
                     cid TEXT PRIMARY KEY,
                     reason TEXT DEFAULT '',
                     blocked_at INTEGER NOT NULL
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS payment_orders (
+                    order_no TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    plan TEXT NOT NULL,
+                    duration_days INTEGER NOT NULL,
+                    amount_cents INTEGER NOT NULL,
+                    currency TEXT NOT NULL DEFAULT 'CNY',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    provider TEXT DEFAULT 'generic',
+                    created_at INTEGER NOT NULL,
+                    paid_at INTEGER DEFAULT 0
                 )
             """)
 
@@ -207,3 +224,81 @@ class CommercialManager:
         with self._conn() as c:
             rows = c.execute("SELECT cid, reason, blocked_at FROM blocked_cids ORDER BY blocked_at DESC").fetchall()
         return [dict(r) for r in rows]
+
+    # ==================== PAYMENT ORDERS & WEBHOOK ====================
+
+    PLAN_PRICES_CENTS = {
+        "vip": 1990,    # ¥19.90 / 30 days
+        "svip": 4990,   # ¥49.90 / 30 days
+    }
+
+    def create_order(self, user_id: str, plan: str = "vip", duration_days: int = 30, provider: str = "generic") -> dict:
+        if plan not in self.PLAN_PRICES_CENTS:
+            raise ValueError("Plan must be vip or svip")
+        months = max(1, round(int(duration_days) / 30))
+        amount_cents = self.PLAN_PRICES_CENTS[plan] * months
+        order_no = f"ORD-{int(time.time())}-{secrets.token_hex(4).upper()}"
+        now = int(time.time())
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO payment_orders (order_no, user_id, plan, duration_days, amount_cents, currency, status, provider, created_at) "
+                "VALUES (?, ?, ?, ?, ?, 'CNY', 'pending', ?, ?)",
+                (order_no, user_id, plan, int(duration_days), amount_cents, provider, now),
+            )
+        return {
+            "order_no": order_no,
+            "user_id": user_id,
+            "plan": plan,
+            "duration_days": int(duration_days),
+            "amount_cents": amount_cents,
+            "currency": "CNY",
+            "status": "pending",
+            "provider": provider,
+            "created_at": now,
+        }
+
+    def verify_webhook_signature(self, payload_bytes: bytes, signature: str) -> bool:
+        secret = os.environ.get("PAYMENT_WEBHOOK_SECRET", "mydrive-pay-secret")
+        expected = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, (signature or "").strip().lower())
+
+    def mark_order_paid(self, order_no: str) -> dict:
+        now = int(time.time())
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM payment_orders WHERE order_no = ?", (order_no,)).fetchone()
+            if not row:
+                raise ValueError("Order not found")
+            if row["status"] == "paid":
+                return dict(row)
+            c.execute("UPDATE payment_orders SET status = 'paid', paid_at = ? WHERE order_no = ?", (now, order_no))
+        membership = self.set_membership(row["user_id"], row["plan"], int(row["duration_days"]))
+        return {**dict(row), "status": "paid", "paid_at": now, "membership": membership}
+
+    def list_orders(self, user_id: Optional[str] = None, limit: int = 50) -> List[dict]:
+        with self._conn() as c:
+            if user_id:
+                rows = c.execute(
+                    "SELECT * FROM payment_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (user_id, int(limit)),
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM payment_orders ORDER BY created_at DESC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def revenue_summary(self) -> dict:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*), COALESCE(SUM(amount_cents), 0) FROM payment_orders WHERE status = 'paid'"
+            ).fetchone()
+            vip_cnt = c.execute(
+                "SELECT COUNT(*) FROM user_memberships WHERE plan IN ('vip','svip') AND (expire_ts=0 OR expire_ts>?)",
+                (int(time.time()),),
+            ).fetchone()[0]
+        return {
+            "paid_orders": int(row[0] or 0),
+            "total_revenue_cents": int(row[1] or 0),
+            "active_vip_users": int(vip_cnt or 0),
+        }

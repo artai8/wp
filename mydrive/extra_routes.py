@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from media_service import MediaService
 from telegram_bot import TelegramBotAdapter
 from commercial_manager import CommercialManager, enable_sqlite_wal
+from commercial_security import AuditLogger, RateLimiter, RateLimitMiddleware, collect_health, export_prometheus_metrics
 from tiered_storage import S3CompatBackend
 
 
@@ -114,6 +115,12 @@ class RedeemCodeGenRequest(BaseModel):
     count: int = 1
 
 
+class CreateOrderRequest(BaseModel):
+    plan: str = "vip"
+    duration_days: int = 30
+    provider: str = "generic"
+
+
 class RedeemRequest(BaseModel):
     code: str
 
@@ -146,6 +153,9 @@ def mount_extra_routes(
     media = MediaService(engine, storage_root)
     tg_bot = TelegramBotAdapter(engine, auth, offline_engine, storage_root)
     commercial = CommercialManager(storage_root)
+    audit = AuditLogger(storage_root)
+    if os.environ.get('RATE_LIMIT_ENABLE', '1').lower() not in ('0', 'false', 'no'):
+        app.add_middleware(RateLimitMiddleware, limiter=RateLimiter())
     # Enable SQLite WAL mode for multi-user concurrency across core DBs
     enable_sqlite_wal(engine.db_path)
     if hasattr(auth, "db_path"):
@@ -630,6 +640,7 @@ loadShare();
         _require_admin(request)
         try:
             codes = commercial.generate_codes(req.plan, req.duration_days, req.count)
+            audit.log('vip.generate_codes', caller_id_fn(request) or '', req.plan, request.client.host if request.client else '', f'count={len(codes)}')
             return {"codes": codes}
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -638,7 +649,9 @@ loadShare();
     async def redeem_vip_code(req: RedeemRequest, request: Request):
         uid = caller_id_fn(request) or "anonymous"
         try:
-            return commercial.redeem_code(uid, req.code)
+            res = commercial.redeem_code(uid, req.code)
+            audit.log('vip.redeem', uid, req.code, request.client.host if request.client else '', res.get('plan', ''))
+            return res
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -650,7 +663,9 @@ loadShare();
     @app.post("/api/admin/moderate/{cid}")
     async def moderate_block_cid(cid: str, req: ModerateRequest, request: Request):
         _require_admin(request)
-        return commercial.block_cid(cid, reason=req.reason)
+        res = commercial.block_cid(cid, reason=req.reason)
+        audit.log('admin.block_cid', caller_id_fn(request) or '', cid, request.client.host if request.client else '', req.reason)
+        return res
 
     @app.delete("/api/admin/moderate/{cid}")
     async def moderate_unblock_cid(cid: str, request: Request):
@@ -699,4 +714,74 @@ loadShare();
             raise HTTPException(status_code=404, detail="Embedded subtitle unavailable")
         return PlainTextResponse(vtt, media_type="text/vtt; charset=utf-8")
 
-    return {"media": media, "telegram": tg_bot, "commercial": commercial}
+
+    # ==================== V3.0 COMMERCIAL SAAS: ORDERS, HEALTH, METRICS, AUDIT & OPS ====================
+
+    @app.post("/api/vip/orders/create")
+    async def create_vip_order(req: CreateOrderRequest, request: Request):
+        uid = caller_id_fn(request) or "anonymous"
+        try:
+            order = commercial.create_order(uid, req.plan, req.duration_days, req.provider)
+            audit.log("order.create", uid, order["order_no"], request.client.host if request.client else "", req.plan)
+            return order
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/vip/orders")
+    async def list_my_orders(request: Request):
+        uid = caller_id_fn(request) or "anonymous"
+        return {"orders": commercial.list_orders(user_id=uid)}
+
+    @app.post("/api/vip/orders/webhook")
+    async def payment_webhook(request: Request):
+        raw = await request.body()
+        sig = request.headers.get("X-Pay-Signature", "")
+        if not commercial.verify_webhook_signature(raw, sig):
+            raise HTTPException(status_code=403, detail="Invalid payment webhook signature")
+        import json as _json
+        data = _json.loads(raw.decode("utf-8"))
+        order_no = data.get("order_no", "")
+        try:
+            res = commercial.mark_order_paid(order_no)
+            audit.log("order.paid", res["user_id"], order_no, request.client.host if request.client else "", res["plan"])
+            return {"ok": True, "order": res}
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.get("/api/health")
+    async def health_check():
+        return collect_health(engine, offline_engine, media, storage_root)
+
+    @app.get("/api/metrics")
+    async def prometheus_metrics():
+        return PlainTextResponse(export_prometheus_metrics(engine, commercial, storage_root), media_type="text/plain; version=0.0.4")
+
+    @app.get("/api/admin/audit-logs")
+    async def get_audit_logs(request: Request, limit: int = Query(100, ge=1, le=500)):
+        _require_admin(request)
+        return {"logs": audit.recent(limit=limit)}
+
+    @app.get("/api/admin/dashboard")
+    async def get_admin_dashboard(request: Request):
+        _require_admin(request)
+        st = engine.get_storage_stats()
+        ts = engine.tiered.get_stats()
+        rev = commercial.revenue_summary()
+        health = collect_health(engine, offline_engine, media, storage_root)
+        return {
+            "storage": st,
+            "tiered": ts,
+            "revenue": rev,
+            "blocked_cids": commercial.list_blocked_cids(),
+            "health": health,
+            "recent_logs": audit.recent(limit=20),
+        }
+
+    @app.get("/manifest.json")
+    async def pwa_manifest():
+        mf = Path(__file__).parent / "static" / "manifest.json"
+        if mf.exists():
+            return FileResponse(mf, media_type="application/manifest+json")
+        raise HTTPException(status_code=404, detail="manifest not found")
+
+    return {"media": media, "telegram": tg_bot, "commercial": commercial, "audit": audit}

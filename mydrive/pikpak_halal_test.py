@@ -281,6 +281,37 @@ def run_all():
     purge_res = client.post("/api/trash/purge-expired?days=30", headers=hdr_a).json()
     ok("刚移入回收站的文件不会被 30 天策略误删", purge_res["deleted_files"] == 0, str(purge_res))
 
+
+    print("== 9) 商业版 v3.0 终极能力：支付订单回调、健康监控、Prometheus、审计日志、运维后台、PWA ==")
+    import hashlib, hmac, json as _json
+    hlth = client.get("/api/health").json()
+    ok("健康检查接口正常", hlth["status"] == "ok" and hlth["components"]["storage_db"] is True, str(hlth))
+
+    met = client.get("/api/metrics")
+    ok("Prometheus 指标导出正常", met.status_code == 200 and "mydrive_files_total" in met.text)
+
+    man = client.get("/manifest.json")
+    ok("PWA manifest.json 可访问", man.status_code == 200 and "MyDrive" in man.text)
+
+    # bob creates a VIP order -> payment webhook with valid HMAC-SHA256 -> bob automatically upgraded to VIP!
+    ord_resp = client.post("/api/vip/orders/create", headers=hdr_b, json={"plan": "vip", "duration_days": 30, "provider": "alipay"})
+    ok("创建 VIP 支付订单", ord_resp.status_code == 200 and ord_resp.json()["amount_cents"] == 1990, ord_resp.text)
+    order_no = ord_resp.json()["order_no"]
+
+    hook_body = _json.dumps({"order_no": order_no}).encode("utf-8")
+    bad_hook = client.post("/api/vip/orders/webhook", content=hook_body, headers={"X-Pay-Signature": "bad"})
+    ok("伪造支付签名被拒绝 (HTTP 403)", bad_hook.status_code == 403)
+
+    good_sig = hmac.new(b"mydrive-pay-secret", hook_body, hashlib.sha256).hexdigest()
+    good_hook = client.post("/api/vip/orders/webhook", content=hook_body, headers={"X-Pay-Signature": good_sig})
+    ok("合法支付回调自动开通 bob VIP", good_hook.status_code == 200 and good_hook.json()["order"]["membership"]["plan"] == "vip", good_hook.text)
+
+    bob_ops = client.get("/api/admin/dashboard", headers=hdr_b)
+    ok("普通用户 bob 无权访问运维后台 (HTTP 403)", bob_ops.status_code == 403)
+
+    alice_ops = client.get("/api/admin/dashboard", headers=hdr_a).json()
+    ok("管理员运维后台统计营收与审计日志", alice_ops["revenue"]["total_revenue_cents"] == 1990 and len(alice_ops["recent_logs"]) >= 3, str(alice_ops["revenue"]))
+
     print(f"\n结果: {passed} passed, 0 failed")
     shutil.rmtree(_TMP, ignore_errors=True)
 

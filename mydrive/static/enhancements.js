@@ -223,6 +223,12 @@
       renderVipCenter();
       return;
     }
+    if (page === 'ops') {
+      currentPage = 'ops';
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === 'ops'));
+      renderOpsDashboard();
+      return;
+    }
     _origNavigate(page);
     if (page === 'trash') {
       setTimeout(injectEmptyTrashButton, 150);
@@ -757,5 +763,48 @@
     const inp = document.getElementById('vipCodeInput');
     if (inp) inp.value = code;
   };
+
+
+  // ---- Admin Operations, Audit & Revenue Dashboard ----
+  async function renderOpsDashboard() {
+    document.getElementById('breadcrumb').innerHTML = `<span class="breadcrumb-item">🛡️ 商业运维监控与安全审计（仅管理员）</span>`;
+    try {
+      const d = await apiJSON('/api/admin/dashboard');
+      const rev = d.revenue || {};
+      const h = d.health || {};
+      const logs = (d.recent_logs || []).map(l => `
+        <div style="font-size:12px;padding:6px 0;border-bottom:1px solid #f0f0f2;display:flex;justify-content:space-between;gap:10px">
+          <span><strong>${escapeHtml(l.action)}</strong> · ${escapeHtml(l.target || '')} (${escapeHtml(l.detail || '')})</span>
+          <span style="color:#86868b">${new Date(l.ts * 1000).toLocaleString()}</span>
+        </div>
+      `).join('') || '<div style="color:#86868b;font-size:13px">暂无审计记录</div>';
+
+      document.getElementById('content').innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px">
+          <div style="background:#fff;padding:16px;border-radius:12px;border:1px solid #e5e5e7">
+            <div style="font-size:12px;color:#86868b">活跃 VIP 用户 / 成交订单</div>
+            <div style="font-size:22px;font-weight:700;margin-top:4px">${rev.active_vip_users || 0} / ${rev.paid_orders || 0}</div>
+            <div style="font-size:12px;color:#34c759">累计营收 ¥${((rev.total_revenue_cents || 0) / 100).toFixed(2)}</div>
+          </div>
+          <div style="background:#fff;padding:16px;border-radius:12px;border:1px solid #e5e5e7">
+            <div style="font-size:12px;color:#86868b">磁盘剩余空间</div>
+            <div style="font-size:22px;font-weight:700;margin-top:4px">${formatSize((h.disk && h.disk.free_bytes) || 0)}</div>
+            <div style="font-size:12px;color:#6e6e73">可用率 ${(h.disk && h.disk.free_percent) || 0}%</div>
+          </div>
+          <div style="background:#fff;padding:16px;border-radius:12px;border:1px solid #e5e5e7">
+            <div style="font-size:12px;color:#86868b">已封禁违规 CID</div>
+            <div style="font-size:22px;font-weight:700;margin-top:4px">${(d.blocked_cids || []).length}</div>
+            <div style="font-size:12px;color:#6e6e73">Prometheus: <code>/api/metrics</code></div>
+          </div>
+        </div>
+        <div style="background:#fff;padding:18px;border-radius:12px;border:1px solid #e5e5e7">
+          <h3 style="margin:0 0 10px;font-size:15px">最近安全审计日志</h3>
+          ${logs}
+        </div>
+      `;
+    } catch (e) {
+      document.getElementById('content').innerHTML = `<div style="background:#fff;padding:24px;border-radius:12px;color:#ff3b30">无权访问运维后台：仅管理员账号（首个注册用户或 ADMIN_USERS 白名单）可查看。</div>`;
+    }
+  }
 
 })();
